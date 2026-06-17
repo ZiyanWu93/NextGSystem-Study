@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NextGSystem Study</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #5f6b7a;
+    --rule: #e1e4e8;
+    --accent: #2563eb;
+    --accent-soft: #eef2ff;
+    --good: #1d6f1d;
+    --good-soft: #ecf7ec;
+    --gap: #b14a02;
+    --gap-soft: #fdf3e7;
+    --info: #1e3a73;
+    --info-soft: #f0f4fa;
+    --code: #f4f5f7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 Helvetica, Arial, sans-serif;
+    margin: 0;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.55;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 28px 18px 28px 24px;
+    border-right: 1px solid var(--rule);
+    background: var(--bg);
+    font-size: 13.5px;
+  }
+  .sidebar .brand { font-weight: 700; font-size: 14px; margin: 0 0 4px 0; color: var(--ink); }
+  .sidebar .brand-sub { font-size: 12px; color: var(--muted); margin: 0 0 18px 0; }
+  .sidebar nav { display: block; }
+  .sidebar nav ul { list-style: none; padding: 0; margin: 0 0 8px 0; }
+  .sidebar nav .group { border-top: 1px solid var(--rule); padding-top: 10px; margin-top: 10px; }
+  .sidebar nav .group:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+  .sidebar nav a {
+    display: block; padding: 4px 8px; border-radius: 4px;
+    color: var(--muted); text-decoration: none; line-height: 1.4;
+  }
+  .sidebar nav a:hover { background: var(--accent-soft); color: var(--accent); }
+  .sidebar nav a.top { color: var(--ink); font-weight: 600; font-size: 13.5px; }
+  .sidebar nav a.sub { font-size: 12.5px; padding-left: 18px; color: #6e7681; }
+  .sidebar nav a.active { background: var(--accent-soft); color: var(--accent); }
+  .sidebar nav a.top.active { color: var(--accent); }
+  .sidebar .footer-link {
+    margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--rule);
+    font-size: 12px; color: var(--muted);
+  }
+  .sidebar .footer-link a { color: var(--accent); text-decoration: none; }
+  .sidebar .footer-link a:hover { text-decoration: underline; }
+
+  .content { padding: 32px 36px 80px 36px; max-width: 920px; min-width: 0; }
+  @media (max-width: 880px) {
+    .layout { grid-template-columns: 1fr; }
+    .sidebar { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--rule); }
+    .content { padding: 24px 20px 60px; }
+  }
+  h1 { font-size: 28px; margin: 0 0 6px 0; }
+  .subtitle { color: var(--muted); font-size: 15px; margin-bottom: 24px; }
+  h2 { font-size: 21px; margin: 36px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--rule); }
+  h2:first-child { margin-top: 0; }
+  h3 { font-size: 16px; margin: 22px 0 8px; }
+  h4 { font-size: 14px; margin: 16px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin: 0 0 12px 0; }
+  ul, ol { margin: 0 0 12px 0; padding-left: 22px; }
+  li { margin-bottom: 4px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; background: var(--code); padding: 1px 5px; border-radius: 3px; }
+  pre { background: var(--code); padding: 12px 14px; border-radius: 6px; overflow-x: auto; font-size: 13px; line-height: 1.5; margin: 0 0 14px 0; }
+  pre code { background: none; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 6px 0 16px 0; font-size: 14px; background: var(--panel); }
+  th, td { text-align: left; padding: 8px 10px; border: 1px solid var(--rule); vertical-align: top; }
+  th { background: #f1f3f6; font-weight: 600; }
+  td code { font-size: 0.9em; }
+  .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 18px; margin: 10px 0 14px; }
+  .accent { border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 12px 0 14px; }
+  .accent p:last-child { margin-bottom: 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 14px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+  .pipeline-card h3 { margin-top: 0; }
+  .pipeline-card .ascii {
+    background: #0d1117; color: #c9d1d9; padding: 14px 16px; border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+    line-height: 1.6; overflow-x: auto; white-space: pre;
+  }
+  .ascii .hi { color: #79c0ff; }
+  .ascii .cc { color: #d2a8ff; }
+  .ascii .rec { color: #ffa657; }
+  .ascii .net { color: #8b949e; }
+  .legend { font-size: 12px; color: var(--muted); margin: 4px 0 10px; }
+  .legend span { display: inline-block; padding: 1px 8px; border-radius: 3px; margin-right: 8px; font-weight: 600; }
+  .legend .done { background: var(--good-soft); color: var(--good); }
+  .legend .todo { background: var(--gap-soft); color: var(--gap); }
+  .legend .base { background: var(--info-soft); color: var(--info); }
+  .feature-block { margin-top: 14px; }
+  .feature-block h3 { margin-bottom: 4px; }
+  .feature-block ul { list-style: none; padding-left: 0; }
+  .feature-block li { padding: 4px 0 4px 26px; position: relative; border-bottom: 1px dashed #eef0f2; }
+  .feature-block li:last-child { border-bottom: none; }
+  .feature-block li.done::before { content: "\2713"; position: absolute; left: 6px; color: var(--good); font-weight: 700; }
+  .feature-block li.todo::before { content: "\25CB"; position: absolute; left: 6px; color: var(--gap); }
+  .small { font-size: 13px; color: var(--muted); }
+  .pill {
+    display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px;
+    background: var(--accent-soft); color: var(--accent); font-weight: 600;
+    letter-spacing: 0.02em; margin-left: 6px; vertical-align: middle;
+  }
+  .chips { margin: 0 0 22px; }
+  .chips .pill { margin: 0 6px 6px 0; }
+  .feature-link {
+    display: block; background: var(--panel); border: 1px solid var(--rule);
+    border-radius: 10px; padding: 18px 22px; text-decoration: none; color: var(--ink);
+    transition: border-color 0.12s ease, box-shadow 0.12s ease; margin: 12px 0;
+  }
+  .feature-link:hover { border-color: var(--accent); box-shadow: 0 1px 6px rgba(37,99,235,0.08); text-decoration: none; }
+  .feature-link .title { font-size: 17px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+  .feature-link .desc { font-size: 14px; color: var(--muted); margin: 0; }
+  .cardgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+  @media (max-width: 760px) { .cardgrid { grid-template-columns: 1fr; } }
+  .cardgrid .feature-link { margin: 0; }
+  .hypo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  @media (max-width: 760px) { .hypo-grid { grid-template-columns: 1fr; } }
+  .hypo-card {
+    border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; background: var(--panel);
+    display: flex; flex-direction: column; gap: 6px; color: var(--ink);
+  }
+  .hypo-card .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); letter-spacing: 0.04em; }
+  .hypo-card .title { font-size: 14.5px; font-weight: 600; line-height: 1.35; margin: 1px 0 3px; }
+  .hypo-card .claim { font-size: 13px; color: var(--muted); line-height: 1.4; }
+  .hypo-card .hypo-footer { margin-top: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; letter-spacing: 0.02em; }
+  .badge.supported { background: var(--good-soft); color: var(--good); }
+  .badge.regime { background: #fff7ed; color: #b45309; }
+  .badge.untested { background: var(--info-soft); color: var(--info); }
+  .badge.refuted { background: var(--gap-soft); color: var(--gap); }
+  .page-section { display: none; }
+  .page-section.active { display: block; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">NextGSystem</div>
+    <div class="brand-sub">a study</div>
+    <nav id="toc">
+      <ul>
+        <li class="group">
+          <a class="top" href="#overview">Overview</a>
+        </li>
+        <li class="group">
+          <a class="top" href="#architecture">Architecture</a>
+          <a class="sub" href="#if-f1">F1 — CU &harr; DU</a>
+          <a class="sub" href="#if-e1">E1 — CU-CP &harr; CU-UP</a>
+          <a class="sub" href="#if-fapi">FAPI — MAC &harr; PHY</a>
+          <a class="sub" href="#if-ofh">Open Fronthaul 7.2</a>
+          <a class="top" href="#design">Design</a>
+          <a class="top" href="#dsl">DSL</a>
+        </li>
+        <li class="group">
+          <a class="top" href="#performance">Performance</a>
+          <a class="top" href="#hypotheses">Hypotheses</a>
+        </li>
+        <li class="group">
+          <a class="top" href="#roadmap">Roadmap</a>
+          <a class="top" href="#survey">Survey</a>
+        </li>
+        <li class="group">
+          <a class="top" href="#glossary">Glossary</a>
+        </li>
+      </ul>
+    </nav>
+    <div class="footer-link">
+      srsRAN Project gNB · <a href="https://github.com/srsran/srsRAN_Project" target="_blank" rel="noopener">upstream &#8599;</a><br>
+      served by <code>python -m http.server</code>
+    </div>
+  </aside>
+
+  <main class="content">
+
+    <!-- ============ OVERVIEW ============ -->
+    <section class="page-section" id="overview" data-section="overview">
+      <h1>NextGSystem Study</h1>
+      <p class="subtitle">Studying how to make the next-generation RAN more efficient and AI-native, on the srsRAN O-CU / O-DU stack.</p>
+      <div class="chips">
+        <span class="pill">srsRAN Project</span>
+        <span class="pill">O-RAN OFH 7.2</span>
+        <span class="pill">CU / DU / RU split</span>
+        <span class="pill">ZMQ / RF-free baseline</span>
+      </div>
+
+      <div class="accent">
+        <p>A study of the srsRAN Project gNB. We read the O-CU / O-DU disaggregation, find where
+        efficiency actually lives, and test every restructuring idea as a falsifiable hypothesis
+        against a measured baseline &mdash; rather than asserting it.</p>
+      </div>
+
+      <p class="small">Status: bootstrap. The literature survey is largely complete (see
+      <a href="#survey">Survey</a>); srsRAN code analysis and baseline bring-up are next. No
+      experiments have been run yet &mdash; hypotheses below are stated, not answered.</p>
+
+      <h2>Operating principles</h2>
+      <div class="feature-block">
+        <ul>
+          <li class="done"><strong>Evidence is falsifiable.</strong> Every efficiency claim is a hypothesis with a verifier and a numbered run record &mdash; never an assertion.</li>
+          <li class="done"><strong>Point, don't duplicate.</strong> This site links to the analysis, specs, and result pages; it does not reproduce them.</li>
+          <li class="done"><strong>Restructuring lives at the interfaces.</strong> F1 / E1 / FAPI / OFH are the seams the gNB is already cut along, so a proposal is "redraw this boundary."</li>
+          <li class="done"><strong>Measure against a reproducible baseline.</strong> RF-free (ZMQ / RU emulator) bring-up first, so a teammate reproduces results without a radio.</li>
+        </ul>
+      </div>
+
+      <h2>Where to go</h2>
+      <div class="cardgrid">
+        <a class="feature-link" href="#architecture">
+          <div class="title">Architecture</div>
+          <p class="desc">The gNB, disaggregated: CU-CP / CU-UP / DU-high / DU-low / RU and the F1 / E1 / FAPI / OFH interfaces between them.</p>
+        </a>
+        <a class="feature-link" href="#design">
+          <div class="title">Design</div>
+          <p class="desc">The restructuring thesis and the operating principles the project upholds.</p>
+        </a>
+        <a class="feature-link" href="#dsl">
+          <div class="title">DSL</div>
+          <p class="desc">A declarative language for deployment topologies and experiments, validated at load.</p>
+        </a>
+        <a class="feature-link" href="#performance">
+          <div class="title">Performance</div>
+          <p class="desc">The fixed characterization framework and the configuration space we sweep.</p>
+        </a>
+        <a class="feature-link" href="#hypotheses">
+          <div class="title">Hypotheses</div>
+          <p class="desc">The falsifiable claims about efficiency and AI-RAN we intend to test.</p>
+        </a>
+        <a class="feature-link" href="#survey">
+          <div class="title">Survey</div>
+          <p class="desc">195+ curated papers across AI-RAN, RAN optimization, and scheduling &mdash; on Drive.</p>
+        </a>
+      </div>
+    </section>
+
+    <!-- ============ ARCHITECTURE ============ -->
+    <section class="page-section" id="architecture" data-section="architecture">
+      <h2>1 &middot; Architecture &mdash; the gNB, disaggregated</h2>
+      <p>The srsRAN Project gNB can run monolithically or be split along O-RAN boundaries into a
+      Central Unit (CU), a Distributed Unit (DU), and a Radio Unit (RU). The CU further splits into
+      a control-plane (CU-CP) and a user-plane (CU-UP); the DU into a higher layer (RLC / MAC /
+      scheduler) and a lower layer (PHY). Restructuring this project studies happens at these seams.</p>
+
+      <div class="pipeline-card panel">
+        <div class="ascii"><span class="net">                 N2 (NGAP)        N3 (GTP-U)</span>
+                    &#8593;                &#8593;
+        &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9484;
+        &#9474;  <span class="cc">CU-CP</span>  &#9472;&#9472;&#9472; E1 &#9472;&#9472;&#9472;  <span class="cc">CU-UP</span>      &#9474;   <span class="net">Central Unit</span>
+        &#9474; RRC, PDCP-C         PDCP-U, SDAP  &#9474;
+        &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9492;
+            <span class="hi">F1-C</span>            <span class="hi">F1-U</span>          <span class="net">F1 interface</span>
+        &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9484;
+        &#9474; <span class="rec">DU-high</span>  RLC / MAC / scheduler  &#9474;   <span class="net">Distributed Unit</span>
+        &#9474; <span class="rec">DU-low</span>   PHY (upper + lower L1) &#9474;
+        &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9492;
+                       <span class="hi">Open Fronthaul 7.2x</span>      <span class="net">(eCPRI / RoE)</span>
+        &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9492;
+        &#9474;  <span class="net">RU</span>  &mdash; lower PHY / RF              &#9474;
+        &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9492;</div>
+      </div>
+
+      <p class="legend">Maturity: <span class="base">baseline</span> mapped from upstream, not yet analyzed &middot;
+      <span style="background:var(--gap-soft);color:var(--gap);padding:1px 8px;border-radius:3px;font-weight:600;">analyzing</span> &middot;
+      <span style="background:var(--good-soft);color:var(--good);padding:1px 8px;border-radius:3px;font-weight:600;">analyzed</span></p>
+
+      <table>
+        <thead><tr><th>Component</th><th>Owns</th><th>Speaks</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td><code>CU-CP</code></td><td>RRC, PDCP-C; connection &amp; mobility control</td><td>E1, F1-C, N2 (NGAP)</td><td><span class="badge untested">baseline</span></td></tr>
+          <tr><td><code>CU-UP</code></td><td>PDCP-U, SDAP; user-plane forwarding</td><td>E1, F1-U, N3 (GTP-U)</td><td><span class="badge untested">baseline</span></td></tr>
+          <tr><td><code>DU-high</code></td><td>RLC, MAC, the <strong>scheduler</strong></td><td>F1, FAPI</td><td><span class="badge untested">baseline</span></td></tr>
+          <tr><td><code>DU-low</code></td><td>PHY (upper + lower L1) &mdash; the compute hot path</td><td>FAPI, OFH</td><td><span class="badge untested">baseline</span></td></tr>
+          <tr><td><code>RU</code></td><td>Lower PHY / RF front end</td><td>Open Fronthaul 7.2x</td><td><span class="badge untested">baseline</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3 id="if-f1">F1 &mdash; CU &harr; DU</h3>
+      <p>The 3GPP CU/DU split (TS 38.470 family). <code>F1-C</code> carries control (F1AP) between
+      CU-CP and DU; <code>F1-U</code> carries user data (GTP-U) between CU-UP and DU. This is the
+      primary disaggregation boundary and the one srsRAN already supports as a split deployment.</p>
+
+      <h3 id="if-e1">E1 &mdash; CU-CP &harr; CU-UP</h3>
+      <p>The control/user-plane separation inside the CU (TS 38.460 family, E1AP). Lets the control
+      plane and a scaled-out user plane evolve independently &mdash; a natural place to study
+      placement and scaling.</p>
+
+      <h3 id="if-fapi">FAPI &mdash; MAC &harr; PHY</h3>
+      <p>The Small Cell Forum interface (SCF 222) between the scheduler in DU-high and the PHY in
+      DU-low (P5 config, P7 data). The seam where AI-RAN inference and L1 acceleration attach, under
+      hard real-time deadlines.</p>
+
+      <h3 id="if-ofh">Open Fronthaul 7.2x &mdash; DU &harr; RU</h3>
+      <p>The O-RAN WG4 lower-layer split (7.2x) between DU-low and the RU, over eCPRI / RoE. srsRAN
+      provides an O-RU-facing fronthaul path; the timing budget here dominates deployability.</p>
+    </section>
+
+    <!-- ============ DESIGN ============ -->
+    <section class="page-section" id="design" data-section="design">
+      <h2>2 &middot; Design</h2>
+      <div class="accent">
+        <p><strong>Thesis.</strong> The efficiency of the RAN is governed by where the functional
+        boundaries are drawn and how work is scheduled across them. By treating srsRAN's O-CU / O-DU
+        split as the substrate and the F1 / E1 / FAPI / OFH interfaces as movable seams, we can study
+        restructuring and AI-RAN integration as controlled, measurable changes rather than redesigns.</p>
+      </div>
+
+      <h3>What the project is, and is not</h3>
+      <table>
+        <thead><tr><th>Is</th><th>Is not</th></tr></thead>
+        <tbody>
+          <tr><td>An analysis + measurement study of srsRAN's structure</td><td>A fork that rewrites srsRAN</td></tr>
+          <tr><td>A set of falsifiable efficiency / AI-RAN hypotheses</td><td>A claim that any restructuring "wins"</td></tr>
+          <tr><td>Restructuring proposals argued at interface boundaries</td><td>A migration tool</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Decision records</h3>
+      <p class="small">Architecture decisions are recorded as numbered ADRs as they are made
+      (which boundary to move, what to measure, what to accept). None recorded yet &mdash; this
+      section fills in as analysis produces decisions.</p>
+    </section>
+
+    <!-- ============ DSL ============ -->
+    <section class="page-section" id="dsl" data-section="dsl">
+      <h2>3 &middot; DSL</h2>
+      <p class="small"><span class="badge regime">planned</span> &nbsp;The declarative language is
+      specified here once the baseline is running; the shape below is the intent.</p>
+      <p>Experiments and deployments are described declaratively, validated at load (fail-closed:
+      an unknown key or an unresolved reference is an error, not a silent default). One spec
+      describes one runnable configuration, so a result is always traceable to the exact inputs
+      that produced it.</p>
+      <h3>Constructs (intended)</h3>
+      <table>
+        <thead><tr><th>Construct</th><th>Describes</th></tr></thead>
+        <tbody>
+          <tr><td><code>deployment</code></td><td>which split is active (monolithic / F1 / full O-RAN), and where each unit runs</td></tr>
+          <tr><td><code>radio</code></td><td>RF-free (ZMQ) vs RU emulator vs real RU; channel conditions</td></tr>
+          <tr><td><code>cell</code></td><td>numerology / SCS, bandwidth, MCS table, cell count</td></tr>
+          <tr><td><code>scheduler</code></td><td>policy under test and its parameters</td></tr>
+          <tr><td><code>workload</code></td><td>UE count, traffic model, mobility</td></tr>
+          <tr><td><code>experiment</code></td><td>the hypothesis it serves, the metrics, the verifier</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ============ PERFORMANCE ============ -->
+    <section class="page-section" id="performance" data-section="performance">
+      <h2>4 &middot; Performance characterization</h2>
+      <p class="small"><span class="badge untested">no runs yet</span> &nbsp;Baseline bring-up
+      precedes any measurement. The framework below is fixed so every metric and figure has a place.</p>
+
+      <h3>Evaluation dimensions</h3>
+      <p>Every result is reported in this fixed set of axes &mdash; the structural shape all metrics fit:</p>
+      <table>
+        <thead><tr><th>Dimension</th><th>What it captures</th><th>Unit</th></tr></thead>
+        <tbody>
+          <tr><td>Throughput</td><td>delivered cell / per-UE rate</td><td>Mb/s</td></tr>
+          <tr><td>Latency</td><td>scheduling + processing delay, F1/FAPI transit</td><td>ms / &micro;s</td></tr>
+          <tr><td>Spectral efficiency</td><td>bits per Hz per cell under load</td><td>b/s/Hz</td></tr>
+          <tr><td>Energy</td><td>power per delivered bit</td><td>W, J/bit</td></tr>
+          <tr><td>Compute / PRB utilization</td><td>CPU/GPU cost, PRB occupancy</td><td>%, cores</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Configuration space</h3>
+      <div class="grid2">
+        <div class="panel">
+          <h4>Scheduler knobs</h4>
+          <ul class="small">
+            <li>numerology (15 / 30 / 60 kHz SCS)</li>
+            <li>bandwidth (10 / 20 / 100 MHz)</li>
+            <li>MCS table, HARQ processes</li>
+            <li>scheduling policy under test</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h4>Environment</h4>
+          <ul class="small">
+            <li>split: monolithic / F1 / full O-RAN</li>
+            <li>radio: ZMQ / RU emulator / real RU</li>
+            <li>UE count, traffic model, mobility</li>
+            <li>channel: AWGN / fading profile</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ HYPOTHESES ============ -->
+    <section class="page-section" id="hypotheses" data-section="hypotheses">
+      <h2>5 &middot; Hypotheses</h2>
+      <p class="small">Falsifiable claims to test. All <span class="badge untested">untested</span>
+      until a verifier and a run record exist &mdash; this catalog is the work list, not results.</p>
+      <div class="hypo-grid">
+        <div class="hypo-card">
+          <span class="id">H1</span>
+          <div class="title">Scheduler policy drives spectral efficiency</div>
+          <p class="claim">A load-aware scheduler in DU-high improves b/s/Hz over the default under multi-UE contention, without raising tail latency.</p>
+          <div class="hypo-footer"><span class="small">DU-high &middot; scheduler</span><span class="badge untested">untested</span></div>
+        </div>
+        <div class="hypo-card">
+          <span class="id">H2</span>
+          <div class="title">F1 split adds bounded latency</div>
+          <p class="claim">Splitting CU/DU over F1 adds latency within a stated bound vs. monolithic, and the bound holds across load.</p>
+          <div class="hypo-footer"><span class="small">F1 &middot; CU/DU</span><span class="badge untested">untested</span></div>
+        </div>
+        <div class="hypo-card">
+          <span class="id">H3</span>
+          <div class="title">PHY is the compute hot path</div>
+          <p class="claim">DU-low (PHY) dominates gNB CPU; offloading it changes the energy-per-bit curve more than any other component.</p>
+          <div class="hypo-footer"><span class="small">DU-low &middot; energy</span><span class="badge untested">untested</span></div>
+        </div>
+        <div class="hypo-card">
+          <span class="id">H4</span>
+          <div class="title">AI-RAN can share DU compute</div>
+          <p class="claim">An AI inference workload colocated on DU compute coexists with L1 without violating PHY real-time deadlines, up to a characterized budget.</p>
+          <div class="hypo-footer"><span class="small">FAPI &middot; AI-RAN</span><span class="badge untested">untested</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ROADMAP ============ -->
+    <section class="page-section" id="roadmap" data-section="roadmap">
+      <h2>6 &middot; Roadmap</h2>
+      <div class="legend">
+        <span class="done">done</span> <span class="todo">to do</span>
+      </div>
+      <div class="feature-block">
+        <h3>Phase 0 &middot; Bootstrap</h3>
+        <ul>
+          <li class="done">Project scope, principles, this site</li>
+          <li class="todo">Repo + srsRAN Project pinned as a submodule</li>
+        </ul>
+        <h3>Phase 1 &middot; Survey</h3>
+        <ul>
+          <li class="done">AI-RAN, RAN-optimization, scheduling corpora curated (195+ papers, on Drive)</li>
+          <li class="todo">srsRAN-specific restructuring lens written over the corpus</li>
+        </ul>
+        <h3>Phase 2 &middot; Analyze srsRAN</h3>
+        <ul>
+          <li class="todo">RF-free (ZMQ) baseline bring-up, reproducible</li>
+          <li class="todo">Architecture map: CU / DU / RU, interfaces, call/data flow</li>
+          <li class="todo">Bottleneck inventory (scheduler, PHY, fronthaul timing)</li>
+        </ul>
+        <h3>Phase 3 &middot; Restructure</h3>
+        <ul><li class="todo">Numbered RFCs proposing boundary moves, grounded in 1 + 2</li></ul>
+        <h3>Phase 4 &middot; Study</h3>
+        <ul><li class="todo">Run the hypotheses as experiments; record results</li></ul>
+        <h3>Phase 5 &middot; Synthesize</h3>
+        <ul><li class="todo">Roll findings into a paper / report</li></ul>
+      </div>
+    </section>
+
+    <!-- ============ SURVEY ============ -->
+    <section class="page-section" id="survey" data-section="survey">
+      <h2>7 &middot; Survey</h2>
+      <p>A curated literature corpus underpins this study &mdash; maintained privately and shared
+      with collaborators on request. Each theme carries a synthesis, references, and the papers
+      themselves. The areas directly relevant to this project:</p>
+      <div class="cardgrid">
+        <div class="feature-link">
+          <div class="title">AI-RAN</div>
+          <p class="desc">AI-RAN Alliance, NVIDIA Aerial, AI-native 6G, O-RAN RIC.</p>
+        </div>
+        <div class="feature-link">
+          <div class="title">RAN optimization</div>
+          <p class="desc">RAN software architecture, AI/ML control, slicing, cloud/edge RAN, energy, testbeds.</p>
+        </div>
+        <div class="feature-link">
+          <div class="title">AI-RAN orchestration</div>
+          <p class="desc">Orchestration of AI and RAN on shared infrastructure.</p>
+        </div>
+        <div class="feature-link">
+          <div class="title">Heterogeneous scheduling</div>
+          <p class="desc">The DU scheduler and the efficiency angle.</p>
+        </div>
+      </div>
+      <p class="small">Supporting areas: 5G core / edge, GPU sharing, edge AI inference, NFV systems.</p>
+    </section>
+
+    <!-- ============ GLOSSARY ============ -->
+    <section class="page-section" id="glossary" data-section="glossary">
+      <h2>8 &middot; Glossary</h2>
+      <table>
+        <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>gNB</code></td><td>5G NR base station; here, the srsRAN Project implementation</td></tr>
+          <tr><td><code>CU / DU / RU</code></td><td>Central / Distributed / Radio Unit &mdash; the O-RAN functional split</td></tr>
+          <tr><td><code>CU-CP / CU-UP</code></td><td>CU control plane (RRC, PDCP-C) / user plane (PDCP-U, SDAP)</td></tr>
+          <tr><td><code>F1</code></td><td>CU&harr;DU interface; F1-C control (F1AP), F1-U user (GTP-U)</td></tr>
+          <tr><td><code>E1</code></td><td>CU-CP&harr;CU-UP interface (E1AP)</td></tr>
+          <tr><td><code>FAPI</code></td><td>MAC&harr;PHY interface (Small Cell Forum SCF 222)</td></tr>
+          <tr><td><code>OFH / 7.2x</code></td><td>Open Fronthaul, O-RAN WG4 lower-layer split between DU and RU</td></tr>
+          <tr><td><code>PRB</code></td><td>Physical Resource Block &mdash; the unit of radio resource the scheduler allocates</td></tr>
+          <tr><td><code>SCS / numerology</code></td><td>Sub-Carrier Spacing (15/30/60 kHz) and its NR numerology</td></tr>
+          <tr><td><code>MCS</code></td><td>Modulation and Coding Scheme</td></tr>
+          <tr><td><code>RIC</code></td><td>RAN Intelligent Controller (near-RT / non-RT), the O-RAN control loop</td></tr>
+          <tr><td><code>AI-RAN</code></td><td>Converging AI workloads and the RAN on shared infrastructure (AI-and-RAN, AI-for-RAN, AI-on-RAN)</td></tr>
+          <tr><td><code>ZMQ</code></td><td>ZeroMQ &mdash; srsRAN's RF-free transport for radio-less testbeds</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  // Two-level router. Top-level sidebar links select which <section> is
+  // visible. Sub-level links narrow the visible region inside that section
+  // to a single subsection (the h3 with the matching id). The h2 always
+  // stays visible for context. Lifted from the GstreamerExp site.
+  (function() {
+    var sections = Array.from(document.querySelectorAll('.page-section'));
+    var tocLinks = Array.from(document.querySelectorAll('#toc a'));
+    var subLinks = tocLinks.filter(function(l) {
+      return l.classList.contains('sub') || l.classList.contains('subsub');
+    });
+    var topLinkBySection = {};
+    tocLinks.forEach(function(a) {
+      if (a.classList.contains('top')) {
+        topLinkBySection[a.getAttribute('href').slice(1)] = a;
+      }
+    });
+
+    var sectionRanges = new Map();
+    sections.forEach(function(section) {
+      var children = Array.from(section.children);
+      var ranges = [];
+      subLinks.forEach(function(l) {
+        var id = l.getAttribute('href').slice(1);
+        var el = document.getElementById(id);
+        if (!el || !section.contains(el)) return;
+        var idx = children.findIndex(function(c) { return c === el || c.contains(el); });
+        if (idx === -1) return;
+        var level = l.classList.contains('subsub') ? 2 : 1;
+        ranges.push({id: id, level: level, startIdx: idx});
+      });
+      ranges.sort(function(a, b) { return a.startIdx - b.startIdx; });
+      ranges.forEach(function(r, i) {
+        if (r.level === 1) {
+          var nextSub = null;
+          for (var j = i + 1; j < ranges.length; j++) {
+            if (ranges[j].level === 1) { nextSub = ranges[j]; break; }
+          }
+          r.endIdx = nextSub ? nextSub.startIdx - 1 : children.length - 1;
+        } else {
+          r.endIdx = i + 1 < ranges.length ? ranges[i + 1].startIdx - 1 : children.length - 1;
+        }
+      });
+      sectionRanges.set(section, ranges);
+    });
+
+    var sectionByName = {};
+    sections.forEach(function(s) { sectionByName[s.dataset.section] = s; });
+    var firstTopLink = tocLinks.find(function(l) { return l.classList.contains('top'); });
+    var defaultSection = (firstTopLink && sectionByName[firstTopLink.getAttribute('href').slice(1)])
+      || sections[0] || null;
+
+    function findSection(id) {
+      if (!id) return defaultSection;
+      var el = document.getElementById(id);
+      if (!el) return defaultSection;
+      return el.closest('.page-section') || defaultSection;
+    }
+
+    function applySubsection(section, activeSubId) {
+      var children = Array.from(section.children);
+      var ranges = sectionRanges.get(section) || [];
+      var active = activeSubId ? ranges.find(function(r) { return r.id === activeSubId; }) : null;
+      children.forEach(function(c, i) {
+        if (c.tagName === 'H2') { c.style.display = ''; return; }
+        if (active) {
+          var inActive = i >= active.startIdx && i <= active.endIdx;
+          c.style.display = inActive ? '' : 'none';
+        } else {
+          var inAnyRange = ranges.some(function(r) { return r.level === 1 && i >= r.startIdx && i <= r.endIdx; });
+          c.style.display = inAnyRange ? 'none' : '';
+        }
+      });
+    }
+
+    function activate() {
+      var hash = window.location.hash.slice(1);
+      var section = findSection(hash);
+      if (!section) return;
+      sections.forEach(function(s) { s.classList.toggle('active', s === section); });
+      var ranges = sectionRanges.get(section) || [];
+      var activeSubId = ranges.some(function(r) { return r.id === hash; }) ? hash : null;
+      applySubsection(section, activeSubId);
+      tocLinks.forEach(function(l) { l.classList.remove('active'); });
+      var topLink = topLinkBySection[section.dataset.section];
+      if (topLink) topLink.classList.add('active');
+      if (activeSubId) {
+        var subLink = tocLinks.find(function(l) { return l.getAttribute('href') === '#' + activeSubId; });
+        if (subLink) subLink.classList.add('active');
+      }
+      window.scrollTo({top: 0, behavior: 'auto'});
+    }
+
+    window.addEventListener('hashchange', activate);
+    window.addEventListener('DOMContentLoaded', activate);
+    if (document.readyState !== 'loading') activate();
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# the srsRAN core is brought in as a submodule, not committed here directly
+# (until pinned, keep the slot empty)
+
+# generated artifacts accumulate as the study runs
+runs/**/raw/
+analysis/**/results/*.tmp
