@@ -175,6 +175,9 @@
           <a class="top" href="#dsl">DSL</a>
         </li>
         <li class="group">
+          <a class="top" href="#baseline">Baseline</a>
+          <a class="sub" href="#bl-setup">Setup</a>
+          <a class="sub" href="#bl-method">Methodology</a>
           <a class="top" href="#performance">Performance</a>
           <a class="top" href="#hypotheses">Hypotheses</a>
         </li>
@@ -365,11 +368,74 @@
       </table>
     </section>
 
+    <!-- ============ BASELINE ============ -->
+    <section class="page-section" id="baseline" data-section="baseline">
+      <h2>4 &middot; Baseline</h2>
+      <div class="accent">
+        <p><strong>Verified working (2026-06-17).</strong> The RF-free 5G-SA testbed comes up end
+        to end: the UE registers, gets <code>10.45.0.2</code>, and pings the internet
+        (<code>8.8.8.8</code>) with <strong>0% packet loss</strong> over a pure-software radio.
+        This is the ground every measurement in this study stands on.</p>
+      </div>
+      <p class="small">Full reproducible steps and the exact tested configs:
+      <a href="https://github.com/ZiyanWu93/NextGSystem-Study/blob/main/analysis/baseline/README.md" target="_blank" rel="noopener">analysis/baseline/README.md &#8599;</a></p>
+
+      <h3 id="bl-setup">Setup</h3>
+      <p>One Linux host, no radio. srsRAN's gNB and srsUE exchange IQ samples over ZMQ (a virtual
+      radio); a local Open5GS core runs the 5G control and user planes.</p>
+      <table>
+        <thead><tr><th>Piece</th><th>Role</th><th>Pinned</th></tr></thead>
+        <tbody>
+          <tr><td><code>srsRAN_Project</code> gNB</td><td>the RAN under study</td><td>release_25_10</td></tr>
+          <tr><td><code>srsRAN_4G</code> srsUE</td><td>software UE (test instrument)</td><td>release_25_10</td></tr>
+          <tr><td>Open5GS</td><td>5G-SA core (AMF/SMF/UPF/AUSF/UDM/UDR)</td><td>2.7 + mongodb-org 7.0</td></tr>
+          <tr><td>ZMQ link</td><td>virtual RF: gNB &harr; UE IQ samples</td><td>band 3 / 10 MHz / 52 PRB / 11.52 Msps</td></tr>
+        </tbody>
+      </table>
+      <div class="pipeline-card panel">
+        <div class="ascii"><span class="hi">UE app</span> -- tun_srsue(10.45.0.2) --&gt; <span class="rec">srsUE</span> --<span class="cc">ZMQ</span>--&gt; <span class="rec">gNB</span> --N3/GTP-U--&gt; <span class="net">UPF</span> -- ogstun(10.45.0.1) -- NAT --&gt; internet
+                                  |
+                                  +-- N2/NGAP --&gt; <span class="net">AMF</span> &lt;-- SBI --&gt; <span class="net">AUSF / UDM / UDR</span>   (Open5GS core)</div>
+      </div>
+      <p class="small">Verified on a 24-core Ubuntu 20.04 host &mdash; result:
+      <code>ping 8.8.8.8 &rarr; 4/4 received, 0% loss</code>, RTT ~30&ndash;170 ms over ZMQ.</p>
+
+      <h3 id="bl-method">Methodology &mdash; how the bring-up was cracked</h3>
+      <p>A 5G stack fails silently in a dozen places. What turned ~15 dead ends into a working
+      link was a discipline, not luck:</p>
+      <div class="feature-block">
+        <ul>
+          <li class="done"><strong>Isolate layer by layer.</strong> Build &rarr; core health &rarr; gNB-to-AMF &rarr; RAN attach &rarr; NAS/PDU &rarr; data path. Confirm each layer's post-condition before climbing to the next.</li>
+          <li class="done"><strong>Configure from the authoritative docs, not by adaptation.</strong> Pull the complete official config and reason about the protocol; a stripped-down hand-rolled config silently drops required fields.</li>
+          <li class="done"><strong>Reason about the mechanism, not the symptom.</strong> "Cell selection failed" &rarr; trace MIB &rarr; CORESET#0 &rarr; SIB1. "HTTP 400 at registration" &rarr; SCP NF-discovery &rarr; PLMN mismatch.</li>
+          <li class="done"><strong>Adversarially verify the fix against the docs</strong> before trusting it &mdash; this caught a wrong CORESET#0 index that would have re-created the bug.</li>
+          <li class="done"><strong>Verify by observable post-condition</strong> &mdash; a RACH on the air, an assigned IP, 0% ping loss &mdash; never by "the config looks right".</li>
+        </ul>
+      </div>
+      <h4>The worked example</h4>
+      <p class="small">Every blocker, traced to its layer and mechanism, then fixed:</p>
+      <table>
+        <thead><tr><th>Symptom</th><th>Layer</th><th>Mechanism</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr><td>gNB build dies ~127/1310</td><td>build</td><td>g++ 9.4 + <code>-Werror</code> on a bundled dep</td><td>g++-12, <code>ENABLE_WERROR=OFF</code></td></tr>
+          <tr><td>UE syncs but RRC cell-selection fails, no RACH</td><td>RAN</td><td>CORESET#0 maps outside the carrier &rarr; SIB1 undecodable</td><td><code>coreset0_index: 6</code> (10 MHz)</td></tr>
+          <tr><td>UE never scheduled</td><td>RAN</td><td>srsUE only handles fallback DCI</td><td><code>dci_format_0_1_and_1_1: false</code></td></tr>
+          <tr><td>Registration reject [95], HTTP 400</td><td>core</td><td>SCP NF-discovery fails (No SEPP): PLMN set only in amf.yaml</td><td>PLMN 001/01 across <em>all</em> Open5GS configs</td></tr>
+          <tr><td>auth rejected</td><td>core</td><td>subscriber missing <code>security.sqn</code></td><td>add <code>sqn</code> to the subscriber</td></tr>
+          <tr><td>has IP but ping unreachable</td><td>data</td><td>no default route in the UE namespace</td><td><code>ip route &hellip; dev tun_srsue</code></td></tr>
+        </tbody>
+      </table>
+      <p class="small">The single biggest unlock: reasoning that "cell-selection failure" meant SIB1
+      was never decoded &mdash; found by reading the srsRAN docs and 3GPP 38.213, not by guessing.
+      Documentation first, mechanism always.</p>
+    </section>
+
     <!-- ============ PERFORMANCE ============ -->
     <section class="page-section" id="performance" data-section="performance">
-      <h2>4 &middot; Performance characterization</h2>
-      <p class="small"><span class="badge untested">no runs yet</span> &nbsp;Baseline bring-up
-      precedes any measurement. The framework below is fixed so every metric and figure has a place.</p>
+      <h2>5 &middot; Performance characterization</h2>
+      <p class="small"><span class="badge supported">baseline verified</span> &nbsp;The RF-free
+      baseline is up (see <a href="#baseline">Baseline</a>); measurements run on top of it into the
+      fixed dimension set below.</p>
 
       <h3>Evaluation dimensions</h3>
       <p>Every result is reported in this fixed set of axes &mdash; the structural shape all metrics fit:</p>
@@ -409,7 +475,7 @@
 
     <!-- ============ HYPOTHESES ============ -->
     <section class="page-section" id="hypotheses" data-section="hypotheses">
-      <h2>5 &middot; Hypotheses</h2>
+      <h2>6 &middot; Hypotheses</h2>
       <p class="small">Falsifiable claims to test. All <span class="badge untested">untested</span>
       until a verifier and a run record exist &mdash; this catalog is the work list, not results.</p>
       <div class="hypo-grid">
@@ -442,7 +508,7 @@
 
     <!-- ============ ROADMAP ============ -->
     <section class="page-section" id="roadmap" data-section="roadmap">
-      <h2>6 &middot; Roadmap</h2>
+      <h2>7 &middot; Roadmap</h2>
       <div class="legend">
         <span class="done">done</span> <span class="todo">to do</span>
       </div>
@@ -474,7 +540,7 @@
 
     <!-- ============ SURVEY ============ -->
     <section class="page-section" id="survey" data-section="survey">
-      <h2>7 &middot; Survey</h2>
+      <h2>8 &middot; Survey</h2>
       <p>A curated literature corpus underpins this study &mdash; maintained privately and shared
       with collaborators on request. Each theme carries a synthesis, references, and the papers
       themselves. The areas directly relevant to this project:</p>
@@ -501,7 +567,7 @@
 
     <!-- ============ GLOSSARY ============ -->
     <section class="page-section" id="glossary" data-section="glossary">
-      <h2>8 &middot; Glossary</h2>
+      <h2>9 &middot; Glossary</h2>
       <table>
         <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
         <tbody>
