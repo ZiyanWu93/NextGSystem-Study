@@ -18,9 +18,11 @@ x86-64, 24 cores, 251 GB RAM.
 | Component | Version |
 |---|---|
 | srsRAN_Project (gNB) | `release_25_10` (commit `d2f4b70`) |
-| srsRAN_4G (srsUE) | `release_25_10` |
-| Open5GS (5G core) | 2.7.x (apt PPA) |
+| srsRAN_4G (srsUE) | `release_25_10` (commit `6bcbd9e`) |
+| Open5GS (5G core) | `2.7.7~focal` (apt PPA) |
 | MongoDB | mongodb-org **7.0** (NOT the universe `mongodb` pkg) |
+| Compiler | `g++-12` / `gcc-12` (Ubuntu 20.04 ships gcc 9.4 — too old) |
+| ZMQ | `libzmq` + `czmq` built from source into `/usr/local` |
 
 ## The fixes that actually mattered (hard-won — read before reproducing)
 
@@ -49,12 +51,47 @@ x86-64, 24 cores, 251 GB RAM.
    `g++-12` and `-DENABLE_WERROR=OFF` (stock g++ 9.4 dies on a uWebSockets
    `-Werror` warning). On Ubuntu 22.04+ this is moot.
 
+## 0 · Toolchain, ZMQ, and build
+
+```sh
+# Host deps (Ubuntu 20.04/22.04, x86-64). 20.04 ships gcc 9.4 → add g++-12.
+sudo apt update
+sudo apt install -y cmake make gcc g++ pkg-config build-essential libtool \
+  autoconf automake libfftw3-dev libmbedtls-dev libsctp-dev libyaml-cpp-dev \
+  libgtest-dev libuhd-dev uhd-host libboost-program-options-dev libconfig++-dev
+sudo apt install -y gcc-12 g++-12        # Ubuntu 20.04 only
+
+# ZMQ virtual radio: libzmq + czmq from source (the srsRAN-documented path; the
+# RF driver links against /usr/local/lib/libzmq.so). apt's libzmq3-dev also works.
+mkdir -p ~/src && cd ~/src
+git clone https://github.com/zeromq/libzmq.git
+cd libzmq && ./autogen.sh && ./configure && make -j"$(nproc)" && sudo make install && sudo ldconfig && cd ..
+git clone https://github.com/zeromq/czmq.git
+cd czmq  && ./autogen.sh && ./configure && make -j"$(nproc)" && sudo make install && sudo ldconfig && cd ..
+
+# gNB — srsRAN_Project. g++-12 + WERROR=OFF (fix #8); ZMQ auto-detected from libzmq.
+git clone https://github.com/srsran/srsRAN_Project.git ~/srsRAN_Project
+cd ~/srsRAN_Project && git checkout release_25_10
+mkdir -p build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_WERROR=OFF \
+      -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12 ..
+make -j"$(nproc)" gnb        # -> build/apps/gnb/gnb
+
+# srsUE — srsRAN_4G.
+git clone https://github.com/srsran/srsRAN_4G.git ~/srsRAN_4G
+cd ~/srsRAN_4G && git checkout release_25_10
+mkdir -p build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_WERROR=OFF \
+      -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12 ..
+make -j"$(nproc)" srsue      # -> build/srsue/src/srsue
+```
+
 ## 1 · Core (MongoDB + Open5GS)
 
 ```sh
 # MongoDB 7.0 (the universe `mongodb` 3.6 pkg does NOT work with Open5GS 2.7)
 curl -fsSL https://pgp.mongodb.com/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
 sudo apt update && sudo apt install -y mongodb-org && sudo systemctl enable --now mongod
 
 sudo add-apt-repository -y ppa:open5gs/latest && sudo apt install -y open5gs

@@ -380,15 +380,21 @@
       <p class="small">Full reproducible steps and the exact tested configs:
       <a href="https://github.com/ZiyanWu93/NextGSystem-Study/blob/main/analysis/baseline/README.md" target="_blank" rel="noopener">analysis/baseline/README.md &#8599;</a></p>
 
-      <h3 id="bl-setup">Setup</h3>
+      <h3 id="bl-setup">Setup &mdash; reproduce it from scratch</h3>
       <p>One Linux host, no radio. srsRAN's gNB and srsUE exchange IQ samples over ZMQ (a virtual
-      radio); a local Open5GS core runs the 5G control and user planes.</p>
+      radio); a local Open5GS core runs the 5G control and user planes. Every command below is the
+      one this baseline was actually built and run with &mdash; copy-paste, end to end.</p>
+      <p class="small"><strong>Verified host:</strong> Ubuntu 20.04.6 LTS, x86-64, 24 cores.
+      <strong>Pins:</strong> srsRAN_Project <code>release_25_10</code> (<code>d2f4b70</code>),
+      srsRAN_4G <code>release_25_10</code> (<code>6bcbd9e</code>), Open5GS <code>2.7.7</code>,
+      mongodb-org <code>7.0</code>. The same recipe lives in the repo:
+      <a href="https://github.com/ZiyanWu93/NextGSystem-Study/blob/main/analysis/baseline/README.md" target="_blank" rel="noopener">analysis/baseline/README.md &#8599;</a></p>
       <table>
         <thead><tr><th>Piece</th><th>Role</th><th>Pinned</th></tr></thead>
         <tbody>
-          <tr><td><code>srsRAN_Project</code> gNB</td><td>the RAN under study</td><td>release_25_10</td></tr>
-          <tr><td><code>srsRAN_4G</code> srsUE</td><td>software UE (test instrument)</td><td>release_25_10</td></tr>
-          <tr><td>Open5GS</td><td>5G-SA core (AMF/SMF/UPF/AUSF/UDM/UDR)</td><td>2.7 + mongodb-org 7.0</td></tr>
+          <tr><td><code>srsRAN_Project</code> gNB</td><td>the RAN under study</td><td>release_25_10 &middot; d2f4b70</td></tr>
+          <tr><td><code>srsRAN_4G</code> srsUE</td><td>software UE (test instrument)</td><td>release_25_10 &middot; 6bcbd9e</td></tr>
+          <tr><td>Open5GS</td><td>5G-SA core (AMF/SMF/UPF/AUSF/UDM/UDR)</td><td>2.7.7 + mongodb-org 7.0</td></tr>
           <tr><td>ZMQ link</td><td>virtual RF: gNB &harr; UE IQ samples</td><td>band 3 / 10 MHz / 52 PRB / 11.52 Msps</td></tr>
         </tbody>
       </table>
@@ -397,8 +403,157 @@
                                   |
                                   +-- N2/NGAP --&gt; <span class="net">AMF</span> &lt;-- SBI --&gt; <span class="net">AUSF / UDM / UDR</span>   (Open5GS core)</div>
       </div>
-      <p class="small">Verified on a 24-core Ubuntu 20.04 host &mdash; result:
-      <code>ping 8.8.8.8 &rarr; 4/4 received, 0% loss</code>, RTT ~30&ndash;170 ms over ZMQ.</p>
+
+      <h4>0 &middot; Host &amp; toolchain</h4>
+      <pre># Ubuntu 20.04/22.04, x86-64. 20.04 ships gcc 9.4 (too old for srsRAN_Project),
+# so add g++-12 — unneeded on 22.04+ where the stock compiler is new enough.
+sudo apt update
+sudo apt install -y cmake make gcc g++ pkg-config build-essential libtool \
+  autoconf automake libfftw3-dev libmbedtls-dev libsctp-dev libyaml-cpp-dev \
+  libgtest-dev libuhd-dev uhd-host libboost-program-options-dev libconfig++-dev
+sudo apt install -y gcc-12 g++-12        # Ubuntu 20.04 only</pre>
+
+      <h4>1 &middot; ZMQ virtual radio (from source)</h4>
+      <pre># srsRAN's ZMQ RF driver links against libzmq + czmq. Build from source (into
+# /usr/local) — the srsRAN-documented path, and what this baseline links against.
+mkdir -p ~/src &amp;&amp; cd ~/src
+git clone https://github.com/zeromq/libzmq.git
+cd libzmq &amp;&amp; ./autogen.sh &amp;&amp; ./configure &amp;&amp; make -j"$(nproc)" &amp;&amp; sudo make install &amp;&amp; sudo ldconfig &amp;&amp; cd ..
+git clone https://github.com/zeromq/czmq.git
+cd czmq  &amp;&amp; ./autogen.sh &amp;&amp; ./configure &amp;&amp; make -j"$(nproc)" &amp;&amp; sudo make install &amp;&amp; sudo ldconfig &amp;&amp; cd ..</pre>
+
+      <h4>2 &middot; Build the gNB (srsRAN Project)</h4>
+      <pre>git clone https://github.com/srsran/srsRAN_Project.git ~/srsRAN_Project
+cd ~/srsRAN_Project &amp;&amp; git checkout release_25_10
+mkdir -p build &amp;&amp; cd build
+# g++-12 + WERROR=OFF: stock gcc 9.4 dies on a -Werror warning in a bundled dep.
+# ZMQ is auto-detected from the libzmq installed above — no flag needed.
+cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_WERROR=OFF \
+      -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12 ..
+make -j"$(nproc)" gnb
+# -&gt; ~/srsRAN_Project/build/apps/gnb/gnb</pre>
+
+      <h4>3 &middot; Build the UE (srsRAN 4G / srsUE)</h4>
+      <pre>git clone https://github.com/srsran/srsRAN_4G.git ~/srsRAN_4G
+cd ~/srsRAN_4G &amp;&amp; git checkout release_25_10
+mkdir -p build &amp;&amp; cd build
+# Release for both repos — a Debug srsUE is ~10x slower and would skew every measurement.
+cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_WERROR=OFF \
+      -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12 ..
+make -j"$(nproc)" srsue
+# -&gt; ~/srsRAN_4G/build/srsue/src/srsue</pre>
+
+      <h4>4 &middot; 5G core (Open5GS + MongoDB)</h4>
+      <pre># MongoDB 7.0 — the universe `mongodb` 3.6 package does NOT work with Open5GS 2.7.
+curl -fsSL https://pgp.mongodb.com/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
+echo "deb [ arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/7.0 multiverse" \
+  | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+sudo apt update &amp;&amp; sudo apt install -y mongodb-org &amp;&amp; sudo systemctl enable --now mongod
+
+# Open5GS 2.7 from the official PPA
+sudo add-apt-repository -y ppa:open5gs/latest &amp;&amp; sudo apt update &amp;&amp; sudo apt install -y open5gs
+
+# Use PLMN 001/01 across ALL network functions (not just amf.yaml — see Methodology)
+sudo sed -i 's/mcc: 999/mcc: 001/g; s/mnc: 70/mnc: 01/g' /etc/open5gs/*.yaml
+
+# Data network: the tun device the UPF owns + NAT out to the internet
+sudo ip tuntap add name ogstun mode tun
+sudo ip addr add 10.45.0.1/16 dev ogstun &amp;&amp; sudo ip link set ogstun up
+sudo sysctl -w net.ipv4.ip_forward=1
+sudo iptables -t nat -A POSTROUTING -s 10.45.0.0/16 ! -o ogstun -j MASQUERADE
+
+# Subscriber (srsRAN public test creds) + the sqn some dbctl versions omit
+open5gs-dbctl add 001010123456789 00112233445566778899AABBCCDDEEFF 63BFA50EE6523365FF14C1F45F88737D
+mongosh open5gs --eval 'db.subscribers.updateOne({imsi:"001010123456789"},{$set:{"security.sqn":NumberLong("0")}})'
+
+# Restart the core, NRF first so the rest can register against it
+sudo systemctl restart open5gs-nrfd; sleep 3
+sudo systemctl restart open5gs-scpd open5gs-udrd open5gs-udmd open5gs-ausfd \
+  open5gs-pcfd open5gs-bsfd open5gs-nssfd open5gs-smfd open5gs-upfd open5gs-amfd</pre>
+
+      <h4>5 &middot; gNB config &mdash; <code>~/gnb_zmq.yaml</code></h4>
+      <p class="small">Save the following as <code>~/gnb_zmq.yaml</code>:</p>
+      <pre>cu_cp:
+  amf:
+    addr: 127.0.0.5
+    port: 38412
+    bind_addr: 127.0.0.1
+    supported_tracking_areas:
+      - tac: 1
+        plmn_list:
+          - plmn: "00101"
+            tai_slice_support_list: [ { sst: 1 } ]
+ru_sdr:
+  device_driver: zmq
+  device_args: tx_port=tcp://127.0.0.1:2000,rx_port=tcp://127.0.0.1:2001,id=gnb,base_srate=11.52e6
+  srate: 11.52          # MHz; device_args base_srate is Hz — both = 11.52 MHz
+  tx_gain: 75
+  rx_gain: 75
+cell_cfg:
+  dl_arfcn: 368500
+  band: 3
+  channel_bandwidth_MHz: 10
+  common_scs: 15
+  plmn: "00101"
+  tac: 1
+  pci: 1
+  pdcch:
+    common:    { ss0_index: 0, coreset0_index: 6 }                 # CORESET#0 for 10 MHz
+    dedicated: { ss2_type: common, dci_format_0_1_and_1_1: false } # srsUE wants fallback DCI
+  prach: { prach_config_index: 1 }
+  pdsch: { mcs_table: qam64 }
+  pusch: { mcs_table: qam64 }
+log: { filename: /tmp/gnb.log, all_level: info }</pre>
+
+      <h4>6 &middot; UE config &mdash; <code>~/ue_zmq.conf</code></h4>
+      <p class="small">Save the following as <code>~/ue_zmq.conf</code>:</p>
+      <pre>[rf]
+freq_offset = 0
+tx_gain     = 80
+srate       = 11.52e6
+device_name = zmq
+device_args = tx_port=tcp://*:2001,rx_port=tcp://localhost:2000,id=ue,base_srate=11.52e6
+[rat.eutra]
+nof_carriers = 0          # disable LTE -> pure 5G SA
+[rat.nr]
+bands        = 3
+nof_carriers = 1
+max_nof_prb  = 52
+nof_prb      = 52
+[usim]
+mode = soft
+algo = milenage
+opc  = 63BFA50EE6523365FF14C1F45F88737D
+k    = 00112233445566778899AABBCCDDEEFF
+imsi = 001010123456789
+[rrc]
+release = 15
+[nas]
+apn = internet
+[gw]
+netns = ue1
+[log]
+all_level = info
+filename  = /tmp/ue.log</pre>
+
+      <h4>7 &middot; Run &amp; verify</h4>
+      <pre>sudo ip netns add ue1                          # namespace that will hold the UE's tun
+
+# Terminal 1 — gNB. Wait for "Cell pci=1 ... activated" and "Connected to AMF".
+sudo ~/srsRAN_Project/build/apps/gnb/gnb -c ~/gnb_zmq.yaml
+
+# Terminal 2 — srsUE. Start right after the gNB: ZMQ REQ/REP goes stale if only
+# one side restarts, so always co-start the pair.
+sudo ~/srsRAN_4G/build/srsue/src/srsue ~/ue_zmq.conf
+# UE log: RRC Connected -> Registration Accept -> PDU Session Establishment ... IP: 10.45.0.2
+
+# srsUE assigns the IP but not the route — add the default route, then ping out.
+sudo ip netns exec ue1 ip route replace default dev tun_srsue
+sudo ip netns exec ue1 ping -c4 8.8.8.8         # SUCCESS = 0% packet loss</pre>
+      <p class="small"><strong>Expected end state:</strong> <code>tun_srsue</code> carries
+      <code>10.45.0.2/24</code>; <code>ping 8.8.8.8 &rarr; 4/4 received, 0% loss</code> (RTT
+      ~30&ndash;170 ms over ZMQ). If a step stalls, the failure is almost always one of the six in
+      <a href="#bl-method">Methodology</a> &mdash; each symptom is mapped to its fix there.</p>
 
       <h3 id="bl-method">Methodology &mdash; how the bring-up was cracked</h3>
       <p>A 5G stack fails silently in a dozen places. What turned ~15 dead ends into a working
