@@ -1010,9 +1010,32 @@ sudo ip netns exec ue1 ping -c4 8.8.8.8         # SUCCESS = 0% packet loss</pre>
           <li class="done">Project scope, principles, this site</li>
           <li class="done">AI-RAN / RAN-optimization / scheduling survey curated (195+ papers)</li>
           <li class="done"><strong>RF-free 5G-SA baseline verified</strong> &mdash; UE attaches, <code>ping 8.8.8.8</code> 0% loss (see <a href="#baseline">Baseline</a>)</li>
-          <li class="todo">Architecture map &amp; bottleneck inventory over the running stack</li>
+          <li class="todo"><strong>This week &mdash;</strong> the architecture map &amp; bottleneck inventory begins as the two analyses below</li>
         </ul>
       </div>
+
+      <h3>This week &mdash; analyze the running stack</h3>
+      <p class="small">Two analyses over the verified baseline. Each produces the first concrete fragments of the DSL model (knowledge graph + actor graph) and grounds the runtime's scheduling unit in real code &mdash; feeding pillars 1 and 2.</p>
+
+      <h4>A &middot; MAC layer analysis &mdash; srsRAN</h4>
+      <div class="feature-block">
+        <ul>
+          <li class="todo">Locate DU-high MAC + scheduler in <code>srsRAN_Project</code>; trace the per-slot control flow: slot indication &rarr; scheduler &rarr; DCI / grants &rarr; MAC PDU &rarr; FAPI to the PHY.</li>
+          <li class="todo">Enumerate the actor primitives &mdash; <strong>events</strong> (slot tick, BSR, SR, HARQ ACK/NACK, CQI), <strong>states</strong> (UE context, HARQ entities, logical-channel buffers), <strong>actions</strong> (allocate PRBs, build DCI, assemble the MAC PDU).</li>
+          <li class="todo">Name the <strong>scheduling unit</strong> (slot / TTI, per-UE) and the hot data structures; flag the per-slot deadline as the first non-functional bound.</li>
+        </ul>
+      </div>
+
+      <h4>B &middot; Runtime analysis &mdash; srsRAN &amp; Open5GS</h4>
+      <div class="feature-block">
+        <ul>
+          <li class="todo"><strong>srsRAN</strong> &mdash; the task / executor model: worker threads, slot timing, where MAC / RLC / PHY run, and the real-time deadlines the actor-based execution environment must meet.</li>
+          <li class="todo"><strong>Open5GS</strong> &mdash; the event loop + FSM: how events dispatch to per-NF state machines (the event-dispatching tree), the timers, and where state is coupled to control (the pre/post-condition surface).</li>
+          <li class="todo">For each, name the <strong>scheduling unit</strong> and the event &rarr; handler dispatch; note the state coupling the control knobs will later decouple and expose.</li>
+        </ul>
+      </div>
+
+      <p class="small"><strong>Output:</strong> a first knowledge graph + actor graph for the MAC, and a runtime comparison (srsRAN vs Open5GS) of the scheduling unit and event dispatch.</p>
 
       <h3>1 &middot; DSL design &mdash; model the RAN formally</h3>
       <p class="small">Grounded in the 3GPP spec &mdash; two graphs and the contracts that bind them, turned into a running implementation by code generation.</p>
