@@ -168,9 +168,11 @@
           <a class="sub" href="#if-e1">E1 — CU-CP &harr; CU-UP</a>
           <a class="sub" href="#if-fapi">FAPI — MAC &harr; PHY</a>
           <a class="sub" href="#if-ofh">Open Fronthaul 7.2</a>
-          <a class="sub" href="#rt-srsran">srsRAN runtime</a>
-          <a class="subsub" href="#rt-mac">MAC scheduler</a>
-          <a class="sub" href="#rt-open5gs">Open5GS runtime</a>
+          <a class="sub" href="#runtime">Runtime</a>
+          <a class="subsub" href="#rt-srsran">srsRAN runtime</a>
+          <a class="subsub" href="#rt-open5gs">Open5GS runtime</a>
+          <a class="sub" href="#app-logic">Application logic</a>
+          <a class="subsub" href="#mac-sched">MAC scheduler</a>
           <a class="top" href="#design">Design</a>
           <a class="top" href="#dsl">DSL</a>
         </li>
@@ -260,13 +262,17 @@
 
     <!-- ============ ARCHITECTURE ============ -->
     <section class="page-section" id="architecture" data-section="architecture">
-      <h2>1 &middot; Architecture &mdash; the gNB &amp; 5G core: structure and runtime</h2>
-      <p>Two halves. The <strong>structure</strong> is how the srsRAN Project gNB splits along O-RAN
-      boundaries &mdash; a Central Unit (CU-CP + CU-UP), a Distributed Unit (RLC / MAC / scheduler +
-      PHY), and a Radio Unit, joined by the F1 / E1 / FAPI / OFH interfaces. The
-      <strong>runtime</strong> is how the software actually executes &mdash; the gNB's task / executor
-      model and the Open5GS core's event loop &mdash; each mapped to our primitives below.
-      Restructuring lives at both.</p>
+      <h2>1 &middot; Architecture &mdash; structure, runtime, application logic</h2>
+      <p>Three lenses on one system. The <strong>structure</strong> is the static split &mdash; how
+      the srsRAN gNB decomposes along O-RAN boundaries (a Central Unit, CU-CP + CU-UP; a Distributed
+      Unit, RLC / MAC / scheduler + PHY; a Radio Unit), joined by the F1 / E1 / FAPI / OFH interfaces.
+      The <strong>runtime</strong> is the execution substrate &mdash; <em>how</em> code runs
+      (executors, worker threads, the slot-driven loop in the gNB; the event loop in the Open5GS
+      core). It is <strong>application-logic-independent</strong> and the more fundamental layer: it
+      schedules and dispatches without knowing <em>what</em> it runs. The <strong>application
+      logic</strong> is <em>what</em> the runtime executes &mdash; the domain behaviour (NR
+      scheduling, the core's state machines), modelled as actor graphs and mapped to our primitives.
+      Keeping the runtime and the application logic apart is the point: one substrate, many tenants.</p>
 
       <!-- diagram:nextg-architecture -->
 <div class="pipeline-card panel"><div class="diagram" data-diagram="nextg-architecture">
@@ -419,22 +425,46 @@
       <p>The O-RAN WG4 lower-layer split (7.2x) between DU-low and the RU, over eCPRI / RoE. srsRAN
       provides an O-RU-facing fronthaul path; the timing budget here dominates deployability.</p>
 
-      <h3 id="rt-srsran">srsRAN runtime</h3>
-      <p>The gNB's <strong>actor-based execution environment</strong>, read from the code: a task /
-      executor model schedules the MAC, RLC, and PHY across worker threads against the per-slot
-      real-time deadline. Each layer is an actor with its own events, state, and actions; the
-      scheduling unit is the slot. We map the components to our primitives one at a time &mdash; the
-      MAC scheduler first.</p>
-      <p class="small"><span class="badge regime">mapping in progress</span> &nbsp;The task / executor
-      model itself (the threading substrate) is the next piece to map.</p>
+      <h3 id="runtime">Runtime &mdash; the execution substrate</h3>
+      <p>The runtime is <em>how</em> code actually runs: executors, worker threads, a timing source,
+      a dispatch loop. It is <strong>application-logic-independent</strong> &mdash; it schedules and
+      dispatches without knowing <em>what</em> it is running &mdash; and it is the more fundamental
+      layer. The same few primitives (a scheduling unit, an executor, an event &rarr; handler
+      dispatch) recur in both the RAN and the core even though their application logic is unrelated.
+      Reading a stack's runtime means reading that substrate on its own terms, before any domain
+      behaviour.</p>
 
-      <h4 id="rt-mac">MAC scheduler</h4>
-      <p>The DU-high MAC scheduler as one actor (srsRAN_Project release_25_10). The <strong>slot
-      tick</strong> (<code>slot_indication</code> &mdash; the scheduling unit) drives a per-slot
-      dispatch tree &mdash; common scheduling &rarr; UE scheduling &rarr; <strong>policy</strong>
-      (<code>time_rr</code> | <code>time_qos</code>, a control knob) &rarr; channel allocation &mdash;
-      reading state (UE + HARQ, buffers, resource grid) and emitting grants (<code>sched_result</code>).
-      Every node maps to a real symbol.</p>
+      <h4 id="rt-srsran">srsRAN runtime</h4>
+      <p>The gNB's substrate: a task / executor model &mdash; worker-thread pools fed by the radio's
+      slot timing &mdash; that runs the MAC, RLC, and PHY against the per-slot real-time deadline. The
+      <strong>scheduling unit is the slot</strong>; the executors are the dispatch machinery. This
+      layer would run any actor graph; the MAC scheduler below is just one of its tenants.</p>
+      <p class="small"><span class="badge regime">mapping in progress</span> &nbsp;The task / executor
+      model itself (the threading substrate, srsRAN_Project release_25_10) is the next piece to map.</p>
+
+      <h4 id="rt-open5gs">Open5GS runtime</h4>
+      <p>The 5G core's substrate: a single-threaded <strong>event loop</strong> per network function
+      &mdash; a pollset plus timers driving an event &rarr; handler dispatch into per-NF finite-state
+      machines. The same shape as the gNB runtime (a scheduling unit and a dispatch), at a different
+      rate; the application logic it carries (the NF state machines) stays separate.</p>
+      <p class="small"><span class="badge regime">mapping in progress</span> &nbsp;The event loop and
+      its scheduling unit map next, after the srsRAN executor model.</p>
+
+      <h3 id="app-logic">Application logic &mdash; what the runtime executes</h3>
+      <p>The application logic is the domain behaviour &mdash; NR scheduling, the core's state
+      machines &mdash; that the runtime runs. We model it as <strong>actor graphs</strong> (events,
+      states, actions), expressed in the runtime's primitives but carrying the domain semantics, and
+      map it one component at a time. It is deliberately kept apart from the runtime &mdash; one
+      substrate, many tenants.</p>
+
+      <h4 id="mac-sched">MAC scheduler</h4>
+      <p>The first mapped actor graph: the DU-high MAC scheduler (srsRAN_Project release_25_10). The
+      <strong>slot tick</strong> (<code>slot_indication</code>) is the <em>runtime boundary</em>
+      &mdash; the runtime delivers it as the scheduling unit, and everything below is application
+      logic: a per-slot dispatch tree (common scheduling &rarr; UE scheduling &rarr;
+      <strong>policy</strong>, <code>time_rr</code> | <code>time_qos</code>, a control knob &rarr;
+      channel allocation) that reads state (UE + HARQ, buffers, resource grid) and emits grants
+      (<code>sched_result</code>). Every node maps to a real symbol.</p>
       <!-- diagram:srsran-mac-actor -->
 <div class="pipeline-card panel"><div class="diagram" data-diagram="srsran-mac-actor">
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="0.7.1" preserveAspectRatio="xMinYMin meet" viewBox="0 0 704 1556" width="704" height="1556"><svg class="d2-870879460 d2-svg" width="704" height="1556" viewBox="-12 -13 704 1556"><rect x="-12.000000" y="-13.000000" width="704.000000" height="1556.000000" rx="0.000000" fill="none" class=" fill-N7" stroke-width="0" /><style type="text/css"><![CDATA[
@@ -556,13 +586,6 @@
 </div></div>
 <!-- /diagram:srsran-mac-actor -->
 
-      <h3 id="rt-open5gs">Open5GS runtime</h3>
-      <p>The 5G core's runtime: a single-threaded <strong>event loop</strong> per network function
-      dispatching to per-NF finite state machines (the <strong>event-dispatching tree</strong>),
-      driven by timers and SBI request / response messages. The scheduling unit and the event &rarr;
-      handler dispatch are what we map &mdash; and what we contrast with the srsRAN runtime.</p>
-      <p class="small"><span class="badge regime">mapping in progress</span> &nbsp;Maps next, after
-      the srsRAN executor model.</p>
     </section>
 
     <!-- ============ DESIGN ============ -->
