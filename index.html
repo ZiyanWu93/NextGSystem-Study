@@ -59,6 +59,7 @@
   .sidebar nav a:hover { background: var(--accent-soft); color: var(--accent); }
   .sidebar nav a.top { color: var(--ink); font-weight: 600; font-size: 13.5px; }
   .sidebar nav a.sub { font-size: 12.5px; padding-left: 18px; color: #6e7681; }
+  .sidebar nav a.subsub { font-size: 12px; padding-left: 30px; color: #8b929c; }
   .sidebar nav a.active { background: var(--accent-soft); color: var(--accent); }
   .sidebar nav a.top.active { color: var(--accent); }
   .sidebar .footer-link {
@@ -164,10 +165,11 @@
         </li>
         <li class="group">
           <a class="top" href="#architecture">Architecture</a>
-          <a class="sub" href="#if-f1">F1 — CU &harr; DU</a>
-          <a class="sub" href="#if-e1">E1 — CU-CP &harr; CU-UP</a>
-          <a class="sub" href="#if-fapi">FAPI — MAC &harr; PHY</a>
-          <a class="sub" href="#if-ofh">Open Fronthaul 7.2</a>
+          <a class="sub" href="#structure">Structure</a>
+          <a class="subsub" href="#if-f1">F1 — CU &harr; DU</a>
+          <a class="subsub" href="#if-e1">E1 — CU-CP &harr; CU-UP</a>
+          <a class="subsub" href="#if-fapi">FAPI — MAC &harr; PHY</a>
+          <a class="subsub" href="#if-ofh">Open Fronthaul 7.2</a>
           <a class="sub" href="#runtime">Runtime</a>
           <a class="subsub" href="#rt-srsran">srsRAN runtime</a>
           <a class="subsub" href="#rt-open5gs">Open5GS runtime</a>
@@ -273,6 +275,11 @@
       logic</strong> is <em>what</em> the runtime executes &mdash; the domain behaviour (NR
       scheduling, the core's state machines), modelled as actor graphs and mapped to our primitives.
       Keeping the runtime and the application logic apart is the point: one substrate, many tenants.</p>
+
+      <h3 id="structure">Structure &mdash; the disaggregated gNB</h3>
+      <p>The static decomposition: how the srsRAN gNB splits into a Central Unit, a Distributed Unit,
+      and a Radio Unit &mdash; joined by the F1 / E1 / FAPI / OFH interfaces, the movable seams this
+      study treats as the substrate for restructuring.</p>
 
       <!-- diagram:nextg-architecture -->
 <div class="pipeline-card panel"><div class="diagram" data-diagram="nextg-architecture">
@@ -406,26 +413,36 @@
         </tbody>
       </table>
 
-      <h3 id="if-f1">F1 &mdash; CU &harr; DU</h3>
+      <h4 id="if-f1">F1 &mdash; CU &harr; DU</h4>
       <p>The 3GPP CU/DU split (TS 38.470 family). <code>F1-C</code> carries control (F1AP) between
       CU-CP and DU; <code>F1-U</code> carries user data (GTP-U) between CU-UP and DU. This is the
       primary disaggregation boundary and the one srsRAN already supports as a split deployment.</p>
 
-      <h3 id="if-e1">E1 &mdash; CU-CP &harr; CU-UP</h3>
+      <h4 id="if-e1">E1 &mdash; CU-CP &harr; CU-UP</h4>
       <p>The control/user-plane separation inside the CU (TS 38.460 family, E1AP). Lets the control
       plane and a scaled-out user plane evolve independently &mdash; a natural place to study
       placement and scaling.</p>
 
-      <h3 id="if-fapi">FAPI &mdash; MAC &harr; PHY</h3>
+      <h4 id="if-fapi">FAPI &mdash; MAC &harr; PHY</h4>
       <p>The Small Cell Forum interface (SCF 222) between the scheduler in DU-high and the PHY in
       DU-low (P5 config, P7 data). The seam where AI-RAN inference and L1 acceleration attach, under
       hard real-time deadlines.</p>
 
-      <h3 id="if-ofh">Open Fronthaul 7.2x &mdash; DU &harr; RU</h3>
+      <h4 id="if-ofh">Open Fronthaul 7.2x &mdash; DU &harr; RU</h4>
       <p>The O-RAN WG4 lower-layer split (7.2x) between DU-low and the RU, over eCPRI / RoE. srsRAN
       provides an O-RU-facing fronthaul path; the timing budget here dominates deployability.</p>
 
       <h3 id="runtime">Runtime &mdash; the execution substrate</h3>
+      <div class="accent">
+        <p><strong>Finding &mdash; same loop, two regimes.</strong> Both the gNB and the 5G core run
+        the <em>identical</em> dispatch loop (below), in opposite regimes. <strong>srsRAN</strong> is
+        <strong>time-driven</strong> &mdash; a periodic slot on a hard real-time deadline, dispatched
+        <em>at enqueue</em> across a worker pool (a strand per cell), state held by the tenant.
+        <strong>Open5GS</strong> is <strong>event-driven</strong> &mdash; an aperiodic event,
+        best-effort, dispatched <em>at dequeue</em> on a single thread per NF, state in a generic FSM
+        engine. One substrate, two regimes &mdash; and this runtime is the hub of the research program
+        (see <a href="#roadmap">Roadmap</a>).</p>
+      </div>
       <p>The runtime is <em>how</em> code actually runs: a timing or I/O source, a queue, worker
       threads, a dispatch step. It is <strong>application-logic-independent</strong> &mdash; it
       schedules and dispatches without knowing <em>what</em> it runs &mdash; and it is the more
@@ -562,14 +579,6 @@
           <tr><td><strong>State</strong> locus</td><td>externalised to the tenant</td><td><code>ogs_fsm</code> engine; states are app logic</td></tr>
         </tbody>
       </table>
-      <p>The same shape, two regimes. srsRAN is <strong>time-driven</strong> &mdash; a periodic slot on
-      a hard deadline, dispatched <em>at enqueue</em> (the mapper picks the cell's strand) across a
-      worker pool. Open5GS is <strong>event-driven</strong> &mdash; an aperiodic event, no hard
-      deadline, dispatched <em>at dequeue</em> (the FSM picks the handler by state) on a single thread
-      per NF. The state sits differently too: srsRAN keeps it in the tenant (the runtime is stateless
-      dispatch), while Open5GS's runtime carries a generic FSM <em>engine</em> &mdash; though the
-      states themselves are still application logic.</p>
-
       <h4 id="rt-srsran">srsRAN runtime</h4>
       <p>The DU-high task / executor substrate (srsRAN_Project release_25_10). A
       <strong>slot-timing source</strong> (<code>io_timer_source</code>, off the radio) advances the
