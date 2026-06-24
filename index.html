@@ -83,6 +83,7 @@
   h3 { font-size: 16px; margin: 22px 0 8px; }
   h4 { font-size: 14px; margin: 16px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
   h5 { font-size: 13px; margin: 18px 0 6px; color: var(--ink); font-weight: 600; }
+  h6 { font-size: 12.5px; margin: 22px 0 7px; color: var(--ink); font-weight: 600; padding-left: 9px; border-left: 3px solid #d0d5da; }
   p { margin: 0 0 12px 0; }
   ul, ol { margin: 0 0 12px 0; padding-left: 22px; }
   li { margin-bottom: 4px; }
@@ -700,6 +701,101 @@
         </tbody>
       </table>
 
+      <p>Each one, in the order work flows through them:</p>
+
+      <h6>Task &mdash; <code>unique_task</code></h6>
+      <pre><code>constexpr size_t default_unique_task_buffer_size = 64;
+
+// generic moveable task
+using unique_task = unique_function&lt;void(), default_unique_task_buffer_size&gt;;</code></pre>
+      <p>The unit of work, and the only thing the runtime moves: a type-erased <code>void()</code>
+      closure with a 64-byte inline buffer, so a slot lambda that captures a few pointers never
+      allocates. An executor accepts it; a worker runs it and clears it, releasing the captures.
+      (<code>adt/unique_function.h</code>)</p>
+
+      <h6>Executor &mdash; <code>task_executor</code></h6>
+      <pre><code>class task_executor {
+public:
+  virtual ~task_executor() = default;
+  [[nodiscard]] virtual bool execute(unique_task task) = 0;   // run inline if already on-context
+  [[nodiscard]] virtual bool defer(unique_task task)   = 0;   // always enqueue for later
+};</code></pre>
+      <p>The pure interface &mdash; two virtuals, nothing else. Every concrete part below (the strand, the
+      worker pool) <em>is</em> a <code>task_executor</code>; a tenant holds one and calls it. The
+      <code>[[nodiscard]]</code> bool is the back-pressure the hot path reads to skip a slot rather than
+      block. (<code>support/executors/task_executor.h</code>)</p>
+
+      <h6>Strand &mdash; <code>task_strand</code></h6>
+      <pre><code>bool on_new_task(enqueue_priority) {
+  return job_count.fetch_add(1U, std::memory_order_acq_rel) == 0U;   // 0 → 1: I am the runner
+}
+...
+bool handle_enqueued_task(enqueue_priority prio) {
+  bool strand_acquired = state.on_new_task(prio);
+  if (not strand_acquired) { return true; }         // another thread already holds the strand
+  ... get_task_executor_ref(out_exec).defer([this]() { run_enqueued_tasks(); });   // winner drains batch
+}</code></pre>
+      <p>Serialises one producer's tasks without a mutex. The thread that moves the atomic counter
+      0&nbsp;&rarr;&nbsp;1 wins and defers <code>run_enqueued_tasks</code> to the wrapped executor;
+      everyone else only enqueues and returns. One runner at a time &mdash; this is how a cell's slots
+      stay ordered while cells run in parallel. A strand is itself a <code>task_executor</code>, so it
+      stacks transparently in front of the worker pool. (<code>support/executors/strand_executor.h</code>)</p>
+
+      <h6>Priority queue &mdash; <code>priority_task_queue</code></h6>
+      <pre><code>class priority_task_queue {
+public:
+  [[nodiscard]] bool try_push(task_priority prio, unique_task task);
+  [[nodiscard]] bool try_pop(unique_task&amp; t);     // scans high → low priority
+private:
+  std::vector&lt;std::unique_ptr&lt;detail::any_task_queue&gt;&gt; queues;   // one sub-queue per priority
+};</code></pre>
+      <p>A vector of per-priority sub-queues. <code>try_push</code> routes a task to its bucket;
+      <code>try_pop</code> scans highest to lowest, so a slot indication always overtakes background
+      work. Executors push into it; the worker pops from it.
+      (<code>support/executors/detail/priority_task_queue.h</code>)</p>
+
+      <h6>Worker &mdash; <code>priority_task_worker</code></h6>
+      <pre><code>void priority_task_worker::run_pop_task_loop() {
+  auto consumer = task_queue.create_consumer();
+  unique_task t;
+  while (consumer.pop_blocking(t)) {   // block until a task arrives
+    t();                               // run it
+    t = {};                            // release the task's captures
+  }
+}</code></pre>
+      <p>A dedicated thread, and the place a task finally executes: block on the queue, pop in priority
+      order, run the <code>void()</code>, clear it. Because it only ever sees a <code>unique_task</code>,
+      it cannot name the MAC &mdash; the scheduler is just a tenant whose work happens to be next.
+      (<code>lib/support/executors/priority_task_worker.cpp</code>)</p>
+
+      <h6>Timer &mdash; <code>timer_manager</code> / <code>unique_timer</code></h6>
+      <pre><code>unique_timer timer_manager::create_unique_timer(task_executor&amp; exec);   // bind a timer to an executor
+...
+// on expiry the manager posts the callback as a task onto that executor:
+return timer.frontend-&gt;exec-&gt;defer([frontend, expiry_epoch]() {
+  if (frontend-&gt;backend_ch.current_cmd_id() == expiry_epoch)
+    frontend-&gt;timeout_callback(frontend-&gt;id);
+});</code></pre>
+      <p>The one component that <em>creates</em> work rather than carrying it. <code>tick()</code> advances
+      a time wheel; when a timer expires, the manager <code>defer</code>s its callback onto the executor
+      the timer was bound to &mdash; so a timeout re-enters the runtime as an ordinary task, on the same
+      queues and workers. (<code>support/timers.h</code>, <code>lib/support/timers.cpp</code>)</p>
+
+      <h6>Mapper &mdash; <code>du_high_executor_mapper</code></h6>
+      <pre><code>class du_high_executor_mapper {
+public:
+  virtual du_high_cell_executor_mapper&amp; cell_mapper() = 0;   // executors, per cell
+  virtual du_high_ue_executor_mapper&amp;   ue_mapper()   = 0;   // executors, per UE
+  virtual task_executor&amp; du_control_executor() = 0;
+  virtual task_executor&amp; f1c_rx_executor()     = 0;
+  ...
+};</code></pre>
+      <p>The directory. It owns the strand-and-worker topology and answers one question &mdash; &ldquo;which
+      executor for this producer?&rdquo; &mdash; by cell, by UE, or by control / I-O concern. Every handle
+      it returns is a <code>task_executor</code>, so a tenant receives a seam, never a thread. Re-shaping
+      the topology (dedicated workers vs. a shared strand pool) is a change <em>here</em>, not in any
+      tenant. (<code>du/du_high/du_high_executor_mapper.h</code>)</p>
+
       <p><strong>The layers are not components.</strong> MAC, RLC, the F1 interfaces, the DU control
       plane &mdash; they sit <em>outside</em> the runtime as <strong>tenants</strong>. Each is handed one
       of these executors by the mapper and only ever calls <code>execute()</code>; the runtime never
@@ -726,32 +822,14 @@
   return cell.last_result();
 }</code></pre>
 
-      <p><strong>The work item is type-erased.</strong> Everything the executors move is a
-      <code>unique_task</code> &mdash; a <code>void()</code> closure with a 64-byte inline buffer, so a
-      slot lambda capturing a few pointers never touches the allocator (<code>adt/unique_function.h</code>):</p>
-      <pre><code>using unique_task = unique_function&lt;void(), 64&gt;;   // 64-byte small-buffer; heap only if larger</code></pre>
-      <p>A worker is then just a thread draining a priority queue, running each task and clearing it
-      (<code>priority_task_worker.cpp</code>):</p>
-      <pre><code>void priority_task_worker::run_pop_task_loop() {
-  unique_task t;
-  while (consumer.pop_blocking(t)) { t(); t = {}; }   // run, then release the task's captures
-}</code></pre>
-      <p>Because the executor only ever sees a <code>void()</code>, it knows nothing about the MAC: the
-      scheduler is a tenant the runtime could swap without recompiling. The decoupling is the type, not
-      a convention.</p>
-
-      <p><strong>Serialization is lock-free, per cell.</strong> Many cells share a worker pool, but each
-      cell's tasks run through a <em>strand</em> that guarantees sequential execution without a mutex.
-      The serializer is one atomic counter &mdash; the thread that moves it 0&nbsp;&rarr;&nbsp;1 becomes
-      the runner, everyone else only enqueues (<code>strand_executor.h</code>):</p>
-      <pre><code>bool on_new_task(...) {
-  return job_count.fetch_add(1, std::memory_order_acq_rel) == 0;   // 0→1 ⇒ I run the batch
-}</code></pre>
-      <p>So cell&nbsp;0 and cell&nbsp;1 run in parallel on different pool threads, while a cell's slot
-      task and its MAC tasks never overlap &mdash; parallel across cells, sequential within, no global
-      lock. Which topology you get is a config field, not a rewrite: <code>du_high_executor_config</code>
-      is a <code>variant</code> of a per-cell <code>dedicated_cell_worker</code> list or a
-      <code>strand_based_worker_pool</code>.</p>
+      <p>From there the path is just the components above, in sequence. The slot lambda is a
+      <strong>Task</strong>; the MAC hands it to the cell's high-priority <strong>Executor</strong>; that
+      cell's <strong>Strand</strong> keeps its slots ordered while letting other cells run; a
+      <strong>Worker</strong> finally pops and runs it. None of them knows it is a MAC slot &mdash; the
+      executor sees a <code>void()</code>, so the scheduler is a tenant the runtime could swap without
+      recompiling. Which topology carries the path is a config field, not a rewrite:
+      <code>du_high_executor_config</code> is a <code>variant</code> of a per-cell
+      <code>dedicated_cell_worker</code> list or a <code>strand_based_worker_pool</code>.</p>
 
       <p><strong>What it commits to.</strong> One slot is the indivisible quantum, bounded by a hard
       deadline the code would rather <em>skip</em> than miss; work is type-erased so the substrate is
