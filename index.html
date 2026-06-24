@@ -1432,48 +1432,59 @@ runtime.run();                                                   // pull → dis
       runtime is its execution. (Syntax below is illustrative &mdash; the shape, not the final grammar.)</p>
 
       <h4 id="dsl-kg">Knowledge graph</h4>
-      <p>The system is a typed graph. <strong>Nodes</strong> are entities &mdash; a gNB, a cell, a UE, a
-      bearer, an NF, and the runtime primitives themselves (an executor, a queue, an FSM).
-      <strong>Edges</strong> are typed relations &mdash; <code>contains</code>, <code>runs_on</code>,
-      <code>dispatches_to</code>, <code>depends_on</code>. You define a graph by declaring the node and
-      edge types; an instance is a set of nodes and edges that type-checks against them.</p>
+      <p><strong>What &amp; why.</strong> A knowledge graph is how the study writes down what the system
+      is made of. Every later layer &mdash; the runtime, the knobs, the formal model &mdash; reads one
+      shared description instead of each keeping its own.</p>
       <pre>node Cell     { numerology, bandwidth }
 node Executor { priority }
 edge Cell  -runs_on->   Executor      // every cell is placed on exactly one executor
 edge gNB   -contains->  Cell</pre>
-      <p>The graph is the single source of truth. The runtime topology, the tunable knobs, and the
-      formal model are all <em>projections</em> of it &mdash; so a fact (this cell runs on that executor)
-      is stated once and read everywhere, and any result traces back to the exact graph that produced
-      it.</p>
+      <p><strong>How it works.</strong> The system is a typed graph. Nodes are entities &mdash; a gNB, a
+      cell, a UE, an NF, even the runtime primitives (an executor, a queue). Edges are typed relations:
+      <code>contains</code>, <code>runs_on</code>, <code>dispatches_to</code>. You declare the node and
+      edge types; an instance is nodes and edges that type-check against them.</p>
+      <p><strong>Guarantee &amp; cost.</strong> A fact is stated once and read everywhere, so any result
+      traces back to the exact graph that produced it. The cost: everything downstream depends on the
+      graph being right.</p>
+      <p><strong>Connects.</strong> The runtime topology, the tunable knobs, and the formal model are all
+      projections of this one graph.</p>
 
       <h4 id="dsl-actors">Actor grammar &mdash; action, event, state</h4>
-      <p>Each actor is defined by three vocabularies, not by code: the <strong>states</strong> it can be
-      in, the <strong>events</strong> it accepts, and the <strong>actions</strong> it may take. A rule is
-      a transition &mdash; <code>(state &times; event) &rarr; (actions, next state)</code>.</p>
+      <p><strong>What &amp; why.</strong> An actor grammar describes a single moving part &mdash; a UE, a
+      gNB, an NF &mdash; by what it can do, not by code. One description can then run, be checked, and be
+      proved.</p>
       <pre>actor UE {
   states:  idle, registering, registered, connected
   events:  RegistrationRequest, AuthOK, Release
   on registered + Release  ->  do send_release;  goto idle
 }</pre>
-      <p>This is exactly the FSM from the runtime &mdash; a state is a handler, an event drives it, the
-      actions are what the handler does &mdash; but written declaratively, so one definition can be
+      <p><strong>How it works.</strong> Each actor is three vocabularies: the states it can be in, the
+      events it accepts, and the actions it may take. A rule is one transition &mdash;
+      <code>(state &times; event) &rarr; (actions, next state)</code>.</p>
+      <p><strong>Guarantee &amp; cost.</strong> Because it is declarative, one definition can be
       <em>executed</em> (dispatched at runtime), <em>checked</em> (does every state handle every event?),
-      and <em>proved</em> (is a bad state unreachable?). The same actor description is the runtime's FSM
-      and the formal model's transition system.</p>
+      and <em>proved</em> (is a bad state unreachable?). The cost: the behaviour must fit the
+      state-machine shape.</p>
+      <p><strong>Connects.</strong> This is exactly the runtime's FSM &mdash; a state is a handler, an
+      event drives it, the actions are what the handler does &mdash; and at the same time the formal
+      model's transition system.</p>
 
       <h4 id="dsl-dispatch">Event-dispatching tree</h4>
-      <p>Actors nest, and an event is dispatched <em>down</em> the nesting. It enters at the root; each
-      actor either handles it or re-dispatches it to a child. Control flow is a tree of
-      <code>(actor &times; state &times; event) &rarr; handler</code> walked top-down &mdash; not a call
-      stack.</p>
+      <p><strong>What &amp; why.</strong> An event-dispatching tree wires the actors together. Actors nest
+      &mdash; an NF contains gNBs, a gNB contains UEs &mdash; and an event has to find the right one.</p>
       <pre>AMF
  └─ gNB[id]
      └─ UE[id]          // an NGAP message enters at AMF, re-dispatched gNB → UE</pre>
-      <p>This is the structure both runtimes already are. Open5GS dispatches an event through nested
-      <code>ogs_fsm_t</code> (AMF &rarr; gNB &rarr; UE); srsRAN's executor mapper routes a task through
-      the same shape of tree (cell &rarr; UE). Declaring the tree once lets the DSL generate the
+      <p><strong>How it works.</strong> An event enters at the root and is dispatched down. Each actor
+      either handles it or passes it to a child. Control flow is a tree of
+      <code>(actor &times; state &times; event) &rarr; handler</code> walked top-down, not a call
+      stack.</p>
+      <p><strong>Guarantee &amp; cost.</strong> Declaring the tree once lets the DSL generate the
       dispatch, and lets the formal layer ask reachability and liveness questions over the whole
-      hierarchy at once.</p>
+      hierarchy at once. The cost: every event pays the walk down the tree.</p>
+      <p><strong>Connects.</strong> This is the structure both runtimes already are &mdash; Open5GS
+      dispatches through nested <code>ogs_fsm_t</code> (AMF &rarr; gNB &rarr; UE); srsRAN's executor
+      mapper routes through the same shape (cell &rarr; UE).</p>
 
       <h3 id="dsl-constructs">Constructs (intended)</h3>
       <p>With the model in place, a spec selects and parameterises one runnable configuration of it:</p>
