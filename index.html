@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NextGSystem Study</title>
 <style>
@@ -61,6 +64,7 @@
   .sidebar nav a.sub { font-size: 12.5px; padding-left: 18px; color: #6e7681; }
   .sidebar nav a.subsub { font-size: 12px; padding-left: 30px; color: #8b929c; }
   .sidebar nav a.subsubsub { font-size: 11.5px; padding-left: 42px; color: #a3a8b0; }
+  .sidebar nav a.subsubsubsub { font-size: 11px; padding-left: 54px; color: #b3b8c0; }
   .sidebar nav a.active { background: var(--accent-soft); color: var(--accent); }
   .sidebar nav a.top.active { color: var(--accent); }
   .sidebar .footer-link {
@@ -176,6 +180,13 @@
           <a class="sub" href="#runtime">Runtime</a>
           <a class="subsub" href="#rt-srsran">srsRAN runtime</a>
           <a class="subsubsub" href="#rt-srsran-components">Components</a>
+          <a class="subsubsubsub" href="#rt-comp-task">Task</a>
+          <a class="subsubsubsub" href="#rt-comp-exec">Executor</a>
+          <a class="subsubsubsub" href="#rt-comp-strand">Strand</a>
+          <a class="subsubsubsub" href="#rt-comp-queue">Priority queue</a>
+          <a class="subsubsubsub" href="#rt-comp-worker">Worker</a>
+          <a class="subsubsubsub" href="#rt-comp-timer">Timer</a>
+          <a class="subsubsubsub" href="#rt-comp-mapper">Mapper</a>
           <a class="subsubsub" href="#rt-srsran-mech">The mechanism</a>
           <a class="subsub" href="#rt-open5gs">Open5GS runtime</a>
           <a class="subsub" href="#rt-compare">Comparison</a>
@@ -701,9 +712,16 @@
         </tbody>
       </table>
 
-      <p>Each one, in the order work flows through them:</p>
+      <p><strong>The layers are not components.</strong> MAC, RLC, the F1 interfaces, the DU control
+      plane &mdash; they sit <em>outside</em> the runtime as <strong>tenants</strong>. Each is handed one
+      of these executors by the mapper and only ever calls <code>execute()</code>; the runtime never
+      learns what it computes. Which executor each layer is given &mdash; at which priority, on which
+      strand &mdash; is the boundary between application and runtime, and it belongs with the
+      application logic, not here.</p>
 
-      <h6>Task &mdash; <code>unique_task</code></h6>
+      <p>Each one gets its own page in the sidebar &mdash; in the order work flows through them:</p>
+
+      <h6 id="rt-comp-task">Task &mdash; <code>unique_task</code></h6>
       <pre><code>constexpr size_t default_unique_task_buffer_size = 64;
 
 // generic moveable task
@@ -713,7 +731,7 @@ using unique_task = unique_function&lt;void(), default_unique_task_buffer_size&g
       allocates. An executor accepts it; a worker runs it and clears it, releasing the captures.
       (<code>adt/unique_function.h</code>)</p>
 
-      <h6>Executor &mdash; <code>task_executor</code></h6>
+      <h6 id="rt-comp-exec">Executor &mdash; <code>task_executor</code></h6>
       <pre><code>class task_executor {
 public:
   virtual ~task_executor() = default;
@@ -725,7 +743,7 @@ public:
       <code>[[nodiscard]]</code> bool is the back-pressure the hot path reads to skip a slot rather than
       block. (<code>support/executors/task_executor.h</code>)</p>
 
-      <h6>Strand &mdash; <code>task_strand</code></h6>
+      <h6 id="rt-comp-strand">Strand &mdash; <code>task_strand</code></h6>
       <pre><code>bool on_new_task(enqueue_priority) {
   return job_count.fetch_add(1U, std::memory_order_acq_rel) == 0U;   // 0 → 1: I am the runner
 }
@@ -741,7 +759,7 @@ bool handle_enqueued_task(enqueue_priority prio) {
       stay ordered while cells run in parallel. A strand is itself a <code>task_executor</code>, so it
       stacks transparently in front of the worker pool. (<code>support/executors/strand_executor.h</code>)</p>
 
-      <h6>Priority queue &mdash; <code>priority_task_queue</code></h6>
+      <h6 id="rt-comp-queue">Priority queue &mdash; <code>priority_task_queue</code></h6>
       <pre><code>class priority_task_queue {
 public:
   [[nodiscard]] bool try_push(task_priority prio, unique_task task);
@@ -754,7 +772,7 @@ private:
       work. Executors push into it; the worker pops from it.
       (<code>support/executors/detail/priority_task_queue.h</code>)</p>
 
-      <h6>Worker &mdash; <code>priority_task_worker</code></h6>
+      <h6 id="rt-comp-worker">Worker &mdash; <code>priority_task_worker</code></h6>
       <pre><code>void priority_task_worker::run_pop_task_loop() {
   auto consumer = task_queue.create_consumer();
   unique_task t;
@@ -768,7 +786,7 @@ private:
       it cannot name the MAC &mdash; the scheduler is just a tenant whose work happens to be next.
       (<code>lib/support/executors/priority_task_worker.cpp</code>)</p>
 
-      <h6>Timer &mdash; <code>timer_manager</code> / <code>unique_timer</code></h6>
+      <h6 id="rt-comp-timer">Timer &mdash; <code>timer_manager</code> / <code>unique_timer</code></h6>
       <pre><code>unique_timer timer_manager::create_unique_timer(task_executor&amp; exec);   // bind a timer to an executor
 ...
 // on expiry the manager posts the callback as a task onto that executor:
@@ -781,7 +799,7 @@ return timer.frontend-&gt;exec-&gt;defer([frontend, expiry_epoch]() {
       the timer was bound to &mdash; so a timeout re-enters the runtime as an ordinary task, on the same
       queues and workers. (<code>support/timers.h</code>, <code>lib/support/timers.cpp</code>)</p>
 
-      <h6>Mapper &mdash; <code>du_high_executor_mapper</code></h6>
+      <h6 id="rt-comp-mapper">Mapper &mdash; <code>du_high_executor_mapper</code></h6>
       <pre><code>class du_high_executor_mapper {
 public:
   virtual du_high_cell_executor_mapper&amp; cell_mapper() = 0;   // executors, per cell
@@ -795,13 +813,6 @@ public:
       it returns is a <code>task_executor</code>, so a tenant receives a seam, never a thread. Re-shaping
       the topology (dedicated workers vs. a shared strand pool) is a change <em>here</em>, not in any
       tenant. (<code>du/du_high/du_high_executor_mapper.h</code>)</p>
-
-      <p><strong>The layers are not components.</strong> MAC, RLC, the F1 interfaces, the DU control
-      plane &mdash; they sit <em>outside</em> the runtime as <strong>tenants</strong>. Each is handed one
-      of these executors by the mapper and only ever calls <code>execute()</code>; the runtime never
-      learns what it computes. Which executor each layer is given &mdash; at which priority, on which
-      strand &mdash; is the boundary between application and runtime, and it belongs with the
-      application logic, not here.</p>
 
       <h5 id="rt-srsran-mech">The mechanism</h5>
       <p><strong>The hot path is a deadline.</strong> The clock hands each cell its slot, and the MAC
@@ -1914,7 +1925,7 @@ sudo ip netns exec ue1 ping -c4 8.8.8.8         # SUCCESS = 0% packet loss</pre>
     var sections = Array.from(document.querySelectorAll('.page-section'));
     var tocLinks = Array.from(document.querySelectorAll('#toc a'));
     var subLinks = tocLinks.filter(function(l) {
-      return l.classList.contains('sub') || l.classList.contains('subsub') || l.classList.contains('subsubsub');
+      return l.classList.contains('sub') || l.classList.contains('subsub') || l.classList.contains('subsubsub') || l.classList.contains('subsubsubsub');
     });
     var topLinkBySection = {};
     tocLinks.forEach(function(a) {
@@ -1933,7 +1944,7 @@ sudo ip netns exec ue1 ping -c4 8.8.8.8         # SUCCESS = 0% packet loss</pre>
         if (!el || !section.contains(el)) return;
         var idx = children.findIndex(function(c) { return c === el || c.contains(el); });
         if (idx === -1) return;
-        var level = l.classList.contains('subsubsub') ? 3 : l.classList.contains('subsub') ? 2 : 1;
+        var level = l.classList.contains('subsubsubsub') ? 4 : l.classList.contains('subsubsub') ? 3 : l.classList.contains('subsub') ? 2 : 1;
         ranges.push({id: id, level: level, startIdx: idx});
       });
       ranges.sort(function(a, b) { return a.startIdx - b.startIdx; });
