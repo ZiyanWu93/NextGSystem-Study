@@ -174,6 +174,7 @@
           <a class="subsub" href="#rt-srsran">srsRAN runtime</a>
           <a class="subsub" href="#rt-open5gs">Open5GS runtime</a>
           <a class="subsub" href="#rt-compare">Comparison</a>
+          <a class="subsub" href="#rt-unified">Toward a unified runtime</a>
           <a class="sub" href="#app-logic">Application logic</a>
           <a class="subsub" href="#mac-sched">MAC scheduler</a>
           <a class="top" href="#design">Design</a>
@@ -677,6 +678,56 @@
 </div></div>
 <!-- /diagram:srsran-runtime -->
 
+      <p><strong>The hot path is a deadline.</strong> The clock hands each cell its slot, and the MAC
+      enqueues that slot's work on the cell's high-priority executor &mdash; and <em>drops it</em> if
+      the queue is full. That branch <em>is</em> the hard real-time deadline, in code
+      (<code>lib/mac/mac_dl/mac_cell_processor.cpp</code>):</p>
+      <pre><code>void mac_cell_processor::handle_slot_indication(const mac_cell_timing_context&amp; context) {
+  if (not slot_exec.execute([this, context] {
+        handle_slot_indication_impl(context.sl_tx, ...);     // → scheduler → sched_result
+      })) {
+    logger.warning("Skipped slot indication={}. Cause: DL task queue is full.", context.sl_tx);
+  }
+}</code></pre>
+      <p>Inside, the work reaches the scheduler synchronously and returns the result <em>by reference</em>
+      &mdash; no copy, no allocation on the path (<code>scheduler_impl.cpp</code>):</p>
+      <pre><code>const sched_result&amp; scheduler_impl::slot_indication(slot_point sl_tx, du_cell_index_t cell) {
+  cell.run_slot(sl_tx);
+  return cell.last_result();
+}</code></pre>
+
+      <p><strong>The work item is type-erased.</strong> Everything the executors move is a
+      <code>unique_task</code> &mdash; a <code>void()</code> closure with a 64-byte inline buffer, so a
+      slot lambda capturing a few pointers never touches the allocator (<code>adt/unique_function.h</code>):</p>
+      <pre><code>using unique_task = unique_function&lt;void(), 64&gt;;   // 64-byte small-buffer; heap only if larger</code></pre>
+      <p>A worker is then just a thread draining a priority queue, running each task and clearing it
+      (<code>priority_task_worker.cpp</code>):</p>
+      <pre><code>void priority_task_worker::run_pop_task_loop() {
+  unique_task t;
+  while (consumer.pop_blocking(t)) { t(); t = {}; }   // run, then release the task's captures
+}</code></pre>
+      <p>Because the executor only ever sees a <code>void()</code>, it knows nothing about the MAC: the
+      scheduler is a tenant the runtime could swap without recompiling. The decoupling is the type, not
+      a convention.</p>
+
+      <p><strong>Serialization is lock-free, per cell.</strong> Many cells share a worker pool, but each
+      cell's tasks run through a <em>strand</em> that guarantees sequential execution without a mutex.
+      The serializer is one atomic counter &mdash; the thread that moves it 0&nbsp;&rarr;&nbsp;1 becomes
+      the runner, everyone else only enqueues (<code>strand_executor.h</code>):</p>
+      <pre><code>bool on_new_task(...) {
+  return job_count.fetch_add(1, std::memory_order_acq_rel) == 0;   // 0→1 ⇒ I run the batch
+}</code></pre>
+      <p>So cell&nbsp;0 and cell&nbsp;1 run in parallel on different pool threads, while a cell's slot
+      task and its MAC tasks never overlap &mdash; parallel across cells, sequential within, no global
+      lock. Which topology you get is a config field, not a rewrite: <code>du_high_executor_config</code>
+      is a <code>variant</code> of a per-cell <code>dedicated_cell_worker</code> list or a
+      <code>strand_based_worker_pool</code>.</p>
+
+      <p><strong>What it commits to.</strong> One slot is the indivisible quantum, bounded by a hard
+      deadline the code would rather <em>skip</em> than miss; work is type-erased so the substrate is
+      blind to its tenants; ordering is bought with a lock-free strand, not a lock. These three are what
+      a unified runtime must preserve for the RAN.</p>
+
       <h4 id="rt-open5gs">Open5GS runtime</h4>
       <p>One network function's single-threaded event loop (Open5GS v2.7.7; AMF shown). The loop body
       is <code>amf_main</code> (<code>src/amf/init.c</code>): it blocks in
@@ -801,6 +852,55 @@
 </div></div>
 <!-- /diagram:open5gs-runtime -->
 
+      <p><strong>The runtime is fifteen lines.</strong> A network function's entire execution model is
+      its <code>*_main</code> reactor &mdash; for the AMF, <code>src/amf/init.c</code>:</p>
+      <pre><code>static void amf_main(void *data) {
+  ogs_fsm_t amf_sm;
+  ogs_fsm_init(&amp;amf_sm, amf_state_initial, amf_state_final, 0);
+  for (;;) {
+    ogs_pollset_poll(ogs_app()-&gt;pollset,
+                     ogs_timer_mgr_next(ogs_app()-&gt;timer_mgr));   // block until I/O OR the next timer
+    ogs_timer_mgr_expire(ogs_app()-&gt;timer_mgr);                  // fire due timers → may enqueue
+    for (;;) {
+      amf_event_t *e = NULL;
+      int rv = ogs_queue_trypop(ogs_app()-&gt;queue, (void**)&amp;e);
+      if (rv == OGS_DONE)  goto done;                            // shutdown
+      if (rv == OGS_RETRY) break;                                // queue empty → re-poll
+      ogs_fsm_dispatch(&amp;amf_sm, e);                             // run to completion
+      ogs_event_free(e);
+    }
+  }
+done: ogs_fsm_fini(&amp;amf_sm, 0);
+}</code></pre>
+      <p>The poll timeout <em>is</em> the next timer's expiry, so one thread keeps millisecond timer
+      fidelity with no timer thread. The in-source comment even pins an invariant: expire timers
+      <em>before</em> draining the queue, so a timer and a message racing for the same instant resolve
+      by wall-clock.</p>
+
+      <p><strong>State is a function pointer.</strong> An <code>ogs_fsm_t</code> is three handlers, a
+      transition is one assignment, and dispatch runs the current state then detects the change to fire
+      exit/entry (<code>lib/core/ogs-fsm.c</code>):</p>
+      <pre><code>void ogs_fsm_dispatch(void *fsm, void *event) {
+  ogs_fsm_t *sm = fsm;  ogs_fsm_handler_t tmp = sm-&gt;state;
+  (*tmp)(sm, event);                          // run current state with the event
+  if (sm-&gt;state != tmp)                        // a handler called OGS_FSM_TRAN?
+    fsm_change(fsm, tmp, sm-&gt;state, event);    // exit old state, enter new
+}</code></pre>
+      <p>Every context &mdash; the AMF, each gNB, each UE &mdash; carries its own <code>ogs_fsm_t</code>,
+      and a state handler re-dispatches the event into the child machine. Control flow is a tree of
+      <code>(state &times; event) &rarr; handler</code>, not a call stack.</p>
+
+      <p><strong>One thread, run to completion, no locks.</strong> The whole NF is
+      <code>ogs_thread_create(amf_main, NULL)</code>. Every input &mdash; an NGAP message, an SBI
+      response, a timer &mdash; becomes a 256-byte <code>ogs_event_t</code>, is drained from the single
+      queue, and dispatched to completion before the next. Nothing in the NF preempts anything, so
+      nothing takes a lock; the only cross-NF channel is the network (SBI). Race-freedom is bought by
+      giving up intra-NF parallelism.</p>
+
+      <p><strong>What it commits to.</strong> A single run-to-completion thread (no locks, no intra-NF
+      concurrency); a uniform event as the only unit of work; the FSM as the one control structure.
+      These are what a unified runtime must preserve for the core.</p>
+
       <h4 id="rt-compare">Comparison &mdash; two regimes</h4>
       <p>The two runtimes are that one loop with different data structures in each slot. Each row is a
       primitive; the columns are how srsRAN and Open5GS realise it &mdash; every symbol is a real type
@@ -824,6 +924,35 @@
       <strong>event-driven</strong> &mdash; an aperiodic event, best-effort, dispatched <em>at dequeue</em>
       on a single thread per NF, state in a generic FSM engine. This runtime is the hub of the research
       program (see <a href="#roadmap">Roadmap</a>).</p>
+
+      <h4 id="rt-unified">Toward a unified runtime</h4>
+      <p>Both stacks are the same shape (the model above): submit a work item to a queue; a loop pulls
+      each and routes it to a handler. A unified runtime would expose exactly that &mdash; one
+      submission, one loop &mdash; and the seam already exists in each: srsRAN's
+      <code>task_executor::execute(unique_task)</code> and Open5GS's <code>ogs_queue_push</code> +
+      <code>ogs_fsm_dispatch</code> are the two halves of it.</p>
+      <pre><code>runtime.submit(work_item, handler, /* priority or deadline */);   // srsRAN: task_executor::execute
+                                                                 // Open5GS: ogs_queue_push
+runtime.run();                                                   // pull → dispatch → repeat</code></pre>
+      <p>What such a runtime must <em>parameterize</em> is everything the two regimes disagree on:</p>
+      <ul>
+        <li><strong>Trigger</strong> &mdash; a periodic clock vs. I/O + timer readiness.</li>
+        <li><strong>Concurrency</strong> &mdash; a worker pool with lock-free per-cell strands vs. one
+        run-to-completion thread. <em>The hard one.</em></li>
+        <li><strong>Deadline</strong> &mdash; a hard per-slot bound that <em>drops</em> late work vs.
+        best-effort that never drops.</li>
+        <li><strong>Dispatch point</strong> &mdash; routed by cell at enqueue vs. by state at dequeue.</li>
+        <li><strong>State</strong> &mdash; held by the tenant (the runtime is stateless) vs. an FSM
+        engine the runtime provides.</li>
+      </ul>
+      <p>The conflict that resists unification is <strong>concurrency &times; deadline</strong>. srsRAN's
+      correctness <em>requires</em> non-preemptible slot work to finish before the next tick; Open5GS's
+      correctness <em>requires</em> that nothing in an NF runs concurrently, so no handler ever locks.
+      One runtime cannot promise both contracts to the same handler. It can only offer them as two
+      <em>scheduling policies</em> behind one <code>submit</code>/<code>run</code> surface &mdash; a
+      real-time strand executor for the RAN, a single-thread reactor for the core &mdash; sharing the
+      work item, queue, timer, and dispatch machinery but not the scheduling guarantee. <strong>Common
+      mechanism, pluggable scheduling policy</strong> is where the redesign cuts.</p>
 
       <h3 id="app-logic">Application logic &mdash; what the runtime executes</h3>
       <p>The application logic is the domain behaviour &mdash; NR scheduling, the core's state
