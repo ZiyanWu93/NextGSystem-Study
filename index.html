@@ -174,7 +174,7 @@
           <a class="subsub" href="#if-ofh">Open Fronthaul 7.2</a>
           <a class="sub" href="#runtime">Runtime</a>
           <a class="subsub" href="#rt-srsran">srsRAN runtime</a>
-          <a class="subsubsub" href="#rt-srsran-overview">Components &amp; layers</a>
+          <a class="subsubsub" href="#rt-srsran-components">Components</a>
           <a class="subsubsub" href="#rt-srsran-mech">The mechanism</a>
           <a class="subsub" href="#rt-open5gs">Open5GS runtime</a>
           <a class="subsub" href="#rt-compare">Comparison</a>
@@ -563,15 +563,17 @@
       thread or a queue: it is given an executor, calls <code>execute(task)</code>, and the mapper has
       already decided <em>where</em> that task runs.</p>
 
-      <h5 id="rt-srsran-overview">Components &amp; layers</h5>
-      <p>Five pieces make the substrate, wired in one direction. The <strong>mapper</strong> owns the
-      topology and answers &ldquo;which executor for this concern?&rdquo;. Each <strong>executor</strong>
-      is a thin handle that drops a <code>unique_task</code> into a <strong>priority queue</strong>. A
-      pool of <strong>workers</strong> drains the queues; a per-cell <strong>strand</strong> serialises
-      one cell's tasks across that pool without a lock; and a <strong>timer service</strong> ticks
-      deferred work back in. The layers above hold only executors &mdash; the diagram is that wiring,
-      and the table is the contract: which handle each DU-high layer is given, and where the mapper
-      runs it.</p>
+      <h5 id="rt-srsran-components">Components</h5>
+      <p>The runtime is seven primitives that compose in one direction. A producer holds an
+      <strong>executor</strong> and calls <code>execute(task)</code>. The <strong>task</strong> is a
+      <code>unique_task</code> &mdash; a type-erased <code>void()</code> closure, the only currency the
+      runtime moves. If that executor is a <strong>strand</strong>, it serialises the producer's tasks
+      against each other &mdash; lock-free, one runner at a time &mdash; before forwarding. The executor
+      drops the task into a <strong>priority queue</strong>; a <strong>worker</strong> thread pops it and
+      runs it. A <strong>timer</strong> re-posts expired work onto an executor, so deferred tasks
+      re-enter the same path. The <strong>mapper</strong> is the directory: it owns the wiring and hands
+      each producer its executor. The diagram traces this path; the table names the parts. Nothing in it
+      knows what the task computes &mdash; which is exactly why the layers are tenants, not components.</p>
       <!-- diagram:srsran-runtime -->
 <div class="pipeline-card panel"><div class="diagram" data-diagram="srsran-runtime">
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="0.7.1" preserveAspectRatio="xMinYMin meet" viewBox="0 0 441 1188" width="441" height="1188"><svg class="d2-3851047480 d2-svg" width="441" height="1188" viewBox="-13 -13 441 1188"><rect x="-13.000000" y="-13.000000" width="441.000000" height="1188.000000" rx="0.000000" fill="none" class=" fill-N7" stroke-width="0" /><style type="text/css"><![CDATA[
@@ -686,18 +688,24 @@
 <!-- /diagram:srsran-runtime -->
 
       <table>
-        <thead><tr><th>DU-high layer / concern</th><th>Runtime handle (the seam)</th><th>Where it runs</th></tr></thead>
+        <thead><tr><th>Component</th><th>Type &middot; source</th><th>Role &amp; how it connects</th></tr></thead>
         <tbody>
-          <tr><td>MAC DL &mdash; per slot</td><td><code>cell_mapper().slot_ind_executor(cell)</code></td><td>per-cell strand &middot; <strong>high prio</strong> &middot; hard deadline</td></tr>
-          <tr><td>MAC &mdash; cell events</td><td><code>cell_mapper().mac_cell_executor(cell)</code></td><td>per-cell strand &middot; low prio</td></tr>
-          <tr><td>RLC &mdash; lower</td><td><code>cell_mapper().rlc_lower_executor(cell)</code></td><td>same cell strand &middot; low prio</td></tr>
-          <tr><td>MAC UL &mdash; PDUs</td><td><code>ue_mapper().mac_ul_pdu_executor(ue)</code></td><td>UE strand (per-cell / round-robin)</td></tr>
-          <tr><td>F1-U DL &mdash; PDUs</td><td><code>ue_mapper().f1u_dl_pdu_executor(ue)</code></td><td>UE strand</td></tr>
-          <tr><td>UE control</td><td><code>ue_mapper().ctrl_executor(ue)</code></td><td>UE strand &middot; control queue</td></tr>
-          <tr><td>F1-C RX (SCTP)</td><td><code>f1c_rx_executor()</code></td><td>DU I/O executor</td></tr>
-          <tr><td>DU control / E2</td><td><code>du_control_executor()</code> &middot; <code>du_e2_executor()</code></td><td>DU control strand</td></tr>
+          <tr><td>Task</td><td><code>unique_task</code> &middot; <code>adt/unique_function.h</code></td><td>the only currency &mdash; a <code>void()</code> closure with an inline buffer; executors move it, workers run it</td></tr>
+          <tr><td>Executor</td><td><code>task_executor::execute / defer</code> &middot; <code>support/executors/</code></td><td>the handle a producer holds; pushes a task toward a queue</td></tr>
+          <tr><td>Strand</td><td><code>task_strand</code> &middot; <code>support/executors/strand_executor.h</code></td><td>an executor that wraps another and serialises its tasks lock-free (one runner), no mutex</td></tr>
+          <tr><td>Priority queue</td><td><code>priority_task_queue</code> &middot; <code>support/executors/detail/</code></td><td>holds pending tasks by priority; executors push, the worker pops</td></tr>
+          <tr><td>Worker</td><td><code>priority_task_worker(_pool)</code> &middot; <code>support/executors/</code></td><td>the thread(s): pop a task, run it, release it, repeat</td></tr>
+          <tr><td>Timer</td><td><code>timer_manager</code> &middot; <code>unique_timer</code> &middot; <code>support/timers.h</code></td><td>on expiry, posts a task to an executor &mdash; deferred work re-enters the flow</td></tr>
+          <tr><td>Mapper</td><td><code>du_high_executor_mapper</code> &middot; <code>du/du_high/</code></td><td>owns the topology; answers &ldquo;which executor for this producer?&rdquo;</td></tr>
         </tbody>
       </table>
+
+      <p><strong>The layers are not components.</strong> MAC, RLC, the F1 interfaces, the DU control
+      plane &mdash; they sit <em>outside</em> the runtime as <strong>tenants</strong>. Each is handed one
+      of these executors by the mapper and only ever calls <code>execute()</code>; the runtime never
+      learns what it computes. Which executor each layer is given &mdash; at which priority, on which
+      strand &mdash; is the boundary between application and runtime, and it belongs with the
+      application logic, not here.</p>
 
       <h5 id="rt-srsran-mech">The mechanism</h5>
       <p><strong>The hot path is a deadline.</strong> The clock hands each cell its slot, and the MAC
