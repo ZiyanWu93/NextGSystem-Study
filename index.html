@@ -189,6 +189,15 @@
           <a class="subsubsubsub" href="#rt-comp-mapper">Mapper</a>
           <a class="subsubsub" href="#rt-srsran-mech">The mechanism</a>
           <a class="subsub" href="#rt-open5gs">Open5GS runtime</a>
+          <a class="subsubsub" href="#rt-open5gs-components">Components</a>
+          <a class="subsubsubsub" href="#rt-o5-event">Event</a>
+          <a class="subsubsubsub" href="#rt-o5-queue">Event queue</a>
+          <a class="subsubsubsub" href="#rt-o5-poll">Pollset</a>
+          <a class="subsubsubsub" href="#rt-o5-timer">Timer</a>
+          <a class="subsubsubsub" href="#rt-o5-fsm">FSM</a>
+          <a class="subsubsubsub" href="#rt-o5-dispatch">Dispatcher</a>
+          <a class="subsubsubsub" href="#rt-o5-reactor">Reactor</a>
+          <a class="subsubsub" href="#rt-open5gs-mech">The mechanism</a>
           <a class="subsub" href="#rt-compare">Comparison</a>
           <a class="subsub" href="#rt-unified">Toward a unified runtime</a>
           <a class="sub" href="#app-logic">Application logic</a>
@@ -848,17 +857,18 @@ public:
       a unified runtime must preserve for the RAN.</p>
 
       <h4 id="rt-open5gs">Open5GS runtime</h4>
-      <p>One network function's single-threaded event loop (Open5GS v2.7.7; AMF shown). The loop body
-      is <code>amf_main</code> (<code>src/amf/init.c</code>): it blocks in
-      <code>ogs_pollset_poll</code> with a timeout set to the next timer's expiry
-      (<code>ogs_timer_mgr_next</code>), fires any due timers (<code>ogs_timer_mgr_expire</code>), then
-      drains the queue &mdash; <code>ogs_queue_trypop</code> &mdash; and hands each
-      <code>ogs_event</code> to <code>ogs_fsm_dispatch</code>, which calls the current state's handler
-      (e.g. <code>amf_state_operational</code>) and, on an <code>OGS_FSM_TRAN</code>, runs the exit /
-      entry transitions. A work source &mdash; an SCTP/SBI socket going readable (kqueue here), or a
-      timer &mdash; becomes an event via <code>ogs_queue_push</code>, waking the pollset through a
-      notify fd. <strong>Scheduling unit = one <code>ogs_event</code></strong>. The FSM
-      <em>engine</em> is substrate; the states it runs are the tenant.</p>
+      <p>One network function is one thread running one loop (Open5GS v2.7.7; the AMF shown). The
+      runtime is seven primitives that compose into that loop &mdash; every input becomes an event, and
+      the loop drains them one at a time.</p>
+
+      <h5 id="rt-open5gs-components">Components</h5>
+      <p>The runtime is seven primitives, run by a single thread. Every input &mdash; an NGAP message,
+      an SBI response, a timer &mdash; becomes an <strong>event</strong>; events wait in one
+      <strong>queue</strong>; a <strong>pollset</strong> blocks on sockets with a timeout set by the next
+      <strong>timer</strong>; the <strong>reactor</strong> loop fires due timers, drains the queue, and
+      hands each event to the <strong>dispatcher</strong>, which calls the current state of an
+      <strong>FSM</strong>. One thread, run to completion, no locks. The diagram is the loop; the table
+      names the parts.</p>
       <!-- diagram:open5gs-runtime -->
 <div class="pipeline-card panel"><div class="diagram" data-diagram="open5gs-runtime">
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="0.7.1" preserveAspectRatio="xMinYMin meet" viewBox="0 0 478 1087" width="478" height="1087"><svg class="d2-3325076138 d2-svg" width="478" height="1087" viewBox="-13 -13 478 1087"><rect x="-13.000000" y="-13.000000" width="478.000000" height="1087.000000" rx="0.000000" fill="none" class=" fill-N7" stroke-width="0" /><style type="text/css"><![CDATA[
@@ -971,54 +981,138 @@ public:
 </div></div>
 <!-- /diagram:open5gs-runtime -->
 
-      <p><strong>The runtime is fifteen lines.</strong> A network function's entire execution model is
-      its <code>*_main</code> reactor &mdash; for the AMF, <code>src/amf/init.c</code>:</p>
+      <table>
+        <thead><tr><th>Component</th><th>Type &middot; source</th><th>Role &amp; how it connects</th></tr></thead>
+        <tbody>
+          <tr><td>Event</td><td><code>ogs_event_t</code> &middot; <code>lib/proto/event.h</code></td><td>the only unit of work &mdash; a 256-byte tagged record; produced by I/O and timers, consumed by the dispatcher</td></tr>
+          <tr><td>Event queue</td><td><code>ogs_queue_t</code> &middot; <code>lib/core/ogs-queue.h</code></td><td>one FIFO of events; producers push, the reactor drains</td></tr>
+          <tr><td>Pollset</td><td><code>ogs_pollset_poll</code> &middot; <code>lib/core/ogs-poll.h</code></td><td>waits on every socket with a timeout; the thread's one blocking point</td></tr>
+          <tr><td>Timer</td><td><code>ogs_timer_mgr</code> &middot; <code>lib/core/ogs-timer.c</code></td><td>rb-tree of timers; its next expiry sets the pollset timeout</td></tr>
+          <tr><td>FSM</td><td><code>ogs_fsm_t</code> &middot; <code>lib/core/ogs-fsm.h</code></td><td>state = a function pointer; one per context (AMF, gNB, UE)</td></tr>
+          <tr><td>Dispatcher</td><td><code>ogs_fsm_dispatch</code> &middot; <code>lib/core/ogs-fsm.c</code></td><td>calls the current state with the event; runs exit/entry on a transition</td></tr>
+          <tr><td>Reactor</td><td><code>amf_main</code> &middot; <code>src/amf/init.c</code></td><td>the one-thread loop that drives all of the above</td></tr>
+        </tbody>
+      </table>
+
+      <p><strong>The state handlers are not components.</strong> <code>amf_state_operational</code> and
+      its kin &mdash; what an NF actually does with an event (the NGAP and NAS procedures, the
+      registration and session logic) &mdash; are <strong>tenants</strong>. The dispatcher calls whatever
+      function pointer <code>state</code> holds and never learns what it computes. The loop, the queue,
+      the pollset, the timer, and the FSM <em>engine</em> are the runtime; the state functions are the
+      application.</p>
+
+      <p>Each one gets its own page in the sidebar &mdash; in the order an event flows through them:</p>
+
+      <h6 id="rt-o5-event">Event &mdash; <code>ogs_event_t</code> / <code>amf_event_t</code></h6>
+      <pre><code>typedef struct ogs_event_s {
+    int id;                       // the tag the dispatcher routes on
+    int timer_id;
+    struct { ogs_sbi_request_t *request; ... ogs_sbi_message_t *message; } sbi;
+} ogs_event_t;                    // OGS_EVENT_SIZE = 256 bytes; amf_event_t embeds this as `h`</code></pre>
+      <p>The only unit of work, and a fixed 256-byte record. The <code>id</code> field is the tag the
+      dispatcher routes on; the rest is a union of pointers carrying whatever the event is about &mdash;
+      an NGAP / NAS message, an SBI request, a timer. Every input becomes one of these and nothing else.
+      (<code>lib/proto/event.h</code>, <code>src/amf/event.h</code>)</p>
+
+      <h6 id="rt-o5-queue">Event queue &mdash; <code>ogs_queue_t</code></h6>
+      <pre><code>int ogs_queue_push(ogs_queue_t *queue, void *data);     // producer: hand an event in (blocking)
+int ogs_queue_trypop(ogs_queue_t *queue, void **data);  // loop: take one, or OGS_RETRY if empty</code></pre>
+      <p>A single FIFO of event pointers &mdash; the one channel into the NF. Anything that produces an
+      event (an I/O callback, a timer) calls <code>ogs_queue_push</code>; the reactor drains it with
+      <code>ogs_queue_trypop</code> until it returns <code>OGS_RETRY</code> (empty). One queue, one
+      consumer &mdash; which is what makes the whole NF lock-free. (<code>lib/core/ogs-queue.h</code>)</p>
+
+      <h6 id="rt-o5-poll">Pollset &mdash; <code>ogs_pollset_poll</code></h6>
+      <pre><code>#define ogs_pollset_poll  ogs_pollset_actions.poll      // → epoll on Linux
+...
+num_of_poll = epoll_wait(context-&gt;epfd, context-&gt;event_list, pollset-&gt;capacity,
+    timeout == OGS_INFINITE_TIME ? OGS_INFINITE_TIME : ogs_time_to_msec(timeout));</code></pre>
+      <p>The I/O multiplexer the thread sleeps in. It waits on every registered socket (SCTP to the RAN,
+      SBI to the other NFs) with a <em>timeout</em> &mdash; and that timeout is supplied by the timer.
+      So a single blocking point handles both I/O readiness and the passage of time.
+      (<code>lib/core/ogs-poll.h</code>, <code>lib/core/ogs-epoll.c</code>)</p>
+
+      <h6 id="rt-o5-timer">Timer &mdash; <code>ogs_timer_mgr</code></h6>
+      <pre><code>ogs_time_t ogs_timer_mgr_next(ogs_timer_mgr_t *manager) {   // → becomes the pollset timeout
+  ... rbnode = ogs_rbtree_first(&amp;manager-&gt;tree);            // the earliest-expiring timer
+  if (rbnode) { ... return this-&gt;timeout &gt; current ? this-&gt;timeout - current : OGS_NO_WAIT_TIME; }
+  return OGS_INFINITE_TIME;                                  // no timers → block until I/O
+}</code></pre>
+      <p>A red-black tree of timers keyed by expiry. <code>ogs_timer_mgr_next</code> returns the time to
+      the earliest one &mdash; that value becomes the pollset's timeout, which is how one thread keeps
+      timer fidelity with no timer thread. <code>ogs_timer_mgr_expire</code> then fires every due timer's
+      callback, each of which typically pushes an event. (<code>lib/core/ogs-timer.c</code>)</p>
+
+      <h6 id="rt-o5-fsm">FSM &mdash; <code>ogs_fsm_t</code></h6>
+      <pre><code>typedef void (*ogs_fsm_handler_t)(void *sm, void *event);   // a state IS a function pointer
+
+typedef struct _ogs_fsm_t {
+    ogs_fsm_handler_t init;
+    ogs_fsm_handler_t fini;
+    ogs_fsm_handler_t state;   // the current state
+} ogs_fsm_t;</code></pre>
+      <p>The control structure, and it is tiny: a state is a function pointer, and the machine is just
+      the current one. A transition is a single assignment to <code>state</code>. Every context &mdash;
+      the AMF, each gNB, each UE &mdash; carries its own <code>ogs_fsm_t</code>.
+      (<code>lib/core/ogs-fsm.h</code>)</p>
+
+      <h6 id="rt-o5-dispatch">Dispatcher &mdash; <code>ogs_fsm_dispatch</code></h6>
+      <pre><code>void ogs_fsm_dispatch(void *fsm, void *event) {
+  ogs_fsm_t *sm = fsm;  ogs_fsm_handler_t tmp = sm-&gt;state;
+  (*tmp)(sm, event);                          // run the current state with the event
+  if (sm-&gt;state != tmp)                        // the handler reassigned state?
+    fsm_change(fsm, tmp, sm-&gt;state, event);    // run exit(old) then entry(new)
+}</code></pre>
+      <p>The one call that turns an event into work: dereference the state function pointer and invoke it
+      with the event. If the handler changed <code>state</code>, the dispatcher runs the exit and entry
+      handlers. It never knows what the state function does &mdash; that is the boundary.
+      (<code>lib/core/ogs-fsm.c</code>)</p>
+
+      <h6 id="rt-o5-reactor">Reactor &mdash; the NF loop (<code>amf_main</code>)</h6>
       <pre><code>static void amf_main(void *data) {
   ogs_fsm_t amf_sm;
   ogs_fsm_init(&amp;amf_sm, amf_state_initial, amf_state_final, 0);
   for (;;) {
-    ogs_pollset_poll(ogs_app()-&gt;pollset,
-                     ogs_timer_mgr_next(ogs_app()-&gt;timer_mgr));   // block until I/O OR the next timer
-    ogs_timer_mgr_expire(ogs_app()-&gt;timer_mgr);                  // fire due timers → may enqueue
+    ogs_pollset_poll(ogs_app()-&gt;pollset, ogs_timer_mgr_next(ogs_app()-&gt;timer_mgr));  // I/O or next timer
+    ogs_timer_mgr_expire(ogs_app()-&gt;timer_mgr);                                       // fire due timers
     for (;;) {
       amf_event_t *e = NULL;
       int rv = ogs_queue_trypop(ogs_app()-&gt;queue, (void**)&amp;e);
-      if (rv == OGS_DONE)  goto done;                            // shutdown
-      if (rv == OGS_RETRY) break;                                // queue empty → re-poll
-      ogs_fsm_dispatch(&amp;amf_sm, e);                             // run to completion
+      if (rv == OGS_DONE)  goto done;            // shutdown
+      if (rv == OGS_RETRY) break;                // queue empty → re-poll
+      ogs_fsm_dispatch(&amp;amf_sm, e);              // run to completion
       ogs_event_free(e);
     }
   }
 done: ogs_fsm_fini(&amp;amf_sm, 0);
 }</code></pre>
-      <p>The poll timeout <em>is</em> the next timer's expiry, so one thread keeps millisecond timer
-      fidelity with no timer thread. The in-source comment even pins an invariant: expire timers
-      <em>before</em> draining the queue, so a timer and a message racing for the same instant resolve
+      <p>The spine that composes the other six. One thread (<code>ogs_thread_create(amf_main, NULL)</code>)
+      runs this forever: wait in the pollset, fire due timers, then drain the queue, dispatching each
+      event to the FSM to completion before the next. Every other component is a noun this loop uses.
+      (<code>src/amf/init.c</code>)</p>
+
+      <h5 id="rt-open5gs-mech">The mechanism</h5>
+      <p><strong>The whole NF is one loop.</strong> The <a href="#rt-o5-reactor">reactor</a> runs forever
+      on a single thread: block in the pollset until a socket is readable or the next timer is due, fire
+      the due timers, then drain the queue to empty &mdash; each event dispatched to completion before the
+      next. Two invariants live in those fifteen lines. The poll timeout <em>is</em> the next timer's
+      expiry, so one thread keeps millisecond timer fidelity with no timer thread; and timers fire
+      <em>before</em> the queue is drained, so a timer and a message racing for the same instant resolve
       by wall-clock.</p>
-
-      <p><strong>State is a function pointer.</strong> An <code>ogs_fsm_t</code> is three handlers, a
-      transition is one assignment, and dispatch runs the current state then detects the change to fire
-      exit/entry (<code>lib/core/ogs-fsm.c</code>):</p>
-      <pre><code>void ogs_fsm_dispatch(void *fsm, void *event) {
-  ogs_fsm_t *sm = fsm;  ogs_fsm_handler_t tmp = sm-&gt;state;
-  (*tmp)(sm, event);                          // run current state with the event
-  if (sm-&gt;state != tmp)                        // a handler called OGS_FSM_TRAN?
-    fsm_change(fsm, tmp, sm-&gt;state, event);    // exit old state, enter new
-}</code></pre>
-      <p>Every context &mdash; the AMF, each gNB, each UE &mdash; carries its own <code>ogs_fsm_t</code>,
-      and a state handler re-dispatches the event into the child machine. Control flow is a tree of
-      <code>(state &times; event) &rarr; handler</code>, not a call stack.</p>
-
-      <p><strong>One thread, run to completion, no locks.</strong> The whole NF is
-      <code>ogs_thread_create(amf_main, NULL)</code>. Every input &mdash; an NGAP message, an SBI
-      response, a timer &mdash; becomes a 256-byte <code>ogs_event_t</code>, is drained from the single
-      queue, and dispatched to completion before the next. Nothing in the NF preempts anything, so
-      nothing takes a lock; the only cross-NF channel is the network (SBI). Race-freedom is bought by
-      giving up intra-NF parallelism.</p>
-
+      <p><strong>Control flow is a tree, not a stack.</strong> Each event goes to the
+      <a href="#rt-o5-dispatch">dispatcher</a>, which calls the current state of an
+      <a href="#rt-o5-fsm">FSM</a>. Every context &mdash; the AMF, each gNB, each UE &mdash; carries its
+      own <code>ogs_fsm_t</code>, and a state handler re-dispatches the event into the child machine. The
+      runtime is a tree of <code>(state &times; event) &rarr; handler</code> walked by the dispatcher,
+      not a call stack.</p>
+      <p><strong>One thread, run to completion, no locks.</strong> Every input &mdash; an NGAP message,
+      an SBI response, a timer &mdash; becomes a 256-byte event, is drained from the single queue, and
+      dispatched to completion before the next. Nothing in the NF preempts anything, so nothing takes a
+      lock; the only cross-NF channel is the network (SBI). Race-freedom is bought by giving up intra-NF
+      parallelism.</p>
       <p><strong>What it commits to.</strong> A single run-to-completion thread (no locks, no intra-NF
-      concurrency); a uniform event as the only unit of work; the FSM as the one control structure.
-      These are what a unified runtime must preserve for the core.</p>
+      concurrency); a uniform event as the only unit of work; the FSM as the one control structure. These
+      are what a unified runtime must preserve for the core.</p>
 
       <h4 id="rt-compare">Comparison &mdash; two regimes</h4>
       <p>The two runtimes are that one loop with different data structures in each slot. Each row is a
