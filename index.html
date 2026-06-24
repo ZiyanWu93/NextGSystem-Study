@@ -204,6 +204,11 @@
           <a class="subsub" href="#mac-sched">MAC scheduler</a>
           <a class="top" href="#design">Design</a>
           <a class="top" href="#dsl">DSL</a>
+          <a class="sub" href="#dsl-foundations">Foundations</a>
+          <a class="subsub" href="#dsl-kg">Knowledge graph</a>
+          <a class="subsub" href="#dsl-actors">Actor grammar</a>
+          <a class="subsub" href="#dsl-dispatch">Event-dispatch tree</a>
+          <a class="sub" href="#dsl-constructs">Constructs</a>
         </li>
         <li class="group">
           <a class="top" href="#baseline">Baseline</a>
@@ -1340,7 +1345,59 @@ runtime.run();                                                   // pull → dis
       an unknown key or an unresolved reference is an error, not a silent default). One spec
       describes one runnable configuration, so a result is always traceable to the exact inputs
       that produced it.</p>
-      <h3>Constructs (intended)</h3>
+      <h3 id="dsl-foundations">Foundations &mdash; modeling the system</h3>
+      <p>Before a spec selects a configuration, the language needs a model of the system it configures.
+      That model is a <strong>knowledge graph</strong> of <strong>actors</strong>, each defined by an
+      <strong>actor grammar</strong>, wired into an <strong>event-dispatching tree</strong>. The three
+      are deliberately the same shape as the runtime analysed above: the DSL is the formal model, the
+      runtime is its execution. (Syntax below is illustrative &mdash; the shape, not the final grammar.)</p>
+
+      <h4 id="dsl-kg">Knowledge graph</h4>
+      <p>The system is a typed graph. <strong>Nodes</strong> are entities &mdash; a gNB, a cell, a UE, a
+      bearer, an NF, and the runtime primitives themselves (an executor, a queue, an FSM).
+      <strong>Edges</strong> are typed relations &mdash; <code>contains</code>, <code>runs_on</code>,
+      <code>dispatches_to</code>, <code>depends_on</code>. You define a graph by declaring the node and
+      edge types; an instance is a set of nodes and edges that type-checks against them.</p>
+      <pre>node Cell     { numerology, bandwidth }
+node Executor { priority }
+edge Cell  -runs_on->   Executor      // every cell is placed on exactly one executor
+edge gNB   -contains->  Cell</pre>
+      <p>The graph is the single source of truth. The runtime topology, the tunable knobs, and the
+      formal model are all <em>projections</em> of it &mdash; so a fact (this cell runs on that executor)
+      is stated once and read everywhere, and any result traces back to the exact graph that produced
+      it.</p>
+
+      <h4 id="dsl-actors">Actor grammar &mdash; action, event, state</h4>
+      <p>Each actor is defined by three vocabularies, not by code: the <strong>states</strong> it can be
+      in, the <strong>events</strong> it accepts, and the <strong>actions</strong> it may take. A rule is
+      a transition &mdash; <code>(state &times; event) &rarr; (actions, next state)</code>.</p>
+      <pre>actor UE {
+  states:  idle, registering, registered, connected
+  events:  RegistrationRequest, AuthOK, Release
+  on registered + Release  ->  do send_release;  goto idle
+}</pre>
+      <p>This is exactly the FSM from the runtime &mdash; a state is a handler, an event drives it, the
+      actions are what the handler does &mdash; but written declaratively, so one definition can be
+      <em>executed</em> (dispatched at runtime), <em>checked</em> (does every state handle every event?),
+      and <em>proved</em> (is a bad state unreachable?). The same actor description is the runtime's FSM
+      and the formal model's transition system.</p>
+
+      <h4 id="dsl-dispatch">Event-dispatching tree</h4>
+      <p>Actors nest, and an event is dispatched <em>down</em> the nesting. It enters at the root; each
+      actor either handles it or re-dispatches it to a child. Control flow is a tree of
+      <code>(actor &times; state &times; event) &rarr; handler</code> walked top-down &mdash; not a call
+      stack.</p>
+      <pre>AMF
+ └─ gNB[id]
+     └─ UE[id]          // an NGAP message enters at AMF, re-dispatched gNB → UE</pre>
+      <p>This is the structure both runtimes already are. Open5GS dispatches an event through nested
+      <code>ogs_fsm_t</code> (AMF &rarr; gNB &rarr; UE); srsRAN's executor mapper routes a task through
+      the same shape of tree (cell &rarr; UE). Declaring the tree once lets the DSL generate the
+      dispatch, and lets the formal layer ask reachability and liveness questions over the whole
+      hierarchy at once.</p>
+
+      <h3 id="dsl-constructs">Constructs (intended)</h3>
+      <p>With the model in place, a spec selects and parameterises one runnable configuration of it:</p>
       <table>
         <thead><tr><th>Construct</th><th>Describes</th></tr></thead>
         <tbody>
