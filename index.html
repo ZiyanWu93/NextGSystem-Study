@@ -173,6 +173,7 @@
           <a class="sub" href="#runtime">Runtime</a>
           <a class="subsub" href="#rt-srsran">srsRAN runtime</a>
           <a class="subsub" href="#rt-open5gs">Open5GS runtime</a>
+          <a class="subsub" href="#rt-compare">Comparison</a>
           <a class="sub" href="#app-logic">Application logic</a>
           <a class="subsub" href="#mac-sched">MAC scheduler</a>
           <a class="top" href="#design">Design</a>
@@ -433,25 +434,13 @@
       provides an O-RU-facing fronthaul path; the timing budget here dominates deployability.</p>
 
       <h3 id="runtime">Runtime &mdash; the execution substrate</h3>
-      <div class="accent">
-        <p><strong>Finding &mdash; same loop, two regimes.</strong> Both the gNB and the 5G core run
-        the <em>identical</em> dispatch loop (below), in opposite regimes. <strong>srsRAN</strong> is
-        <strong>time-driven</strong> &mdash; a periodic slot on a hard real-time deadline, dispatched
-        <em>at enqueue</em> across a worker pool (a strand per cell), state held by the tenant.
-        <strong>Open5GS</strong> is <strong>event-driven</strong> &mdash; an aperiodic event,
-        best-effort, dispatched <em>at dequeue</em> on a single thread per NF, state in a generic FSM
-        engine. One substrate, two regimes &mdash; and this runtime is the hub of the research program
-        (see <a href="#roadmap">Roadmap</a>).</p>
-      </div>
-      <p>The runtime is <em>how</em> code actually runs: a timing or I/O source, a queue, worker
-      threads, a dispatch step. It is <strong>application-logic-independent</strong> &mdash; it
-      schedules and dispatches without knowing <em>what</em> it runs &mdash; and it is the more
-      fundamental layer. Read from the code, both stacks reduce to the <em>same loop</em>: a
-      <strong>source</strong> produces a <strong>work item</strong> (the scheduling unit), a
-      <strong>queue</strong> holds it, a <strong>worker</strong> dequeues it, a
-      <strong>dispatch</strong> step routes it to a <strong>handler</strong> &mdash; and the handler
-      is the boundary, below which everything is application logic (the tenant). A timer service feeds
-      deferred work back in.</p>
+      <p>The runtime is the <strong>application-logic-independent</strong> execution substrate &mdash;
+      <em>how</em> code runs, not what it computes &mdash; and the more fundamental layer. Read from the
+      code, both stacks reduce to one <strong>dispatch loop</strong> (below): a source feeds work items
+      &mdash; the scheduling unit &mdash; through a queue to a worker, which dispatches each to a handler
+      (the boundary into application logic); a timer supplies deferred work. srsRAN and Open5GS each
+      instantiate this loop &mdash; the <a href="#rt-compare">comparison</a> shows it is the same loop
+      in two regimes.</p>
       <!-- diagram:runtime-model -->
 <div class="pipeline-card panel"><div class="diagram" data-diagram="runtime-model">
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="0.7.1" preserveAspectRatio="xMinYMin meet" viewBox="0 0 426 1103" width="426" height="1103"><svg class="d2-2261201939 d2-svg" width="426" height="1103" viewBox="-13 -13 426 1103"><rect x="-13.000000" y="-13.000000" width="426.000000" height="1103.000000" rx="0.000000" fill="none" class=" fill-N7" stroke-width="0" /><style type="text/css"><![CDATA[
@@ -563,22 +552,6 @@
 </mask></svg></svg>
 </div></div>
 <!-- /diagram:runtime-model -->
-      <p>The two runtimes are that one shape with different data structures in each slot. Each row is a
-      primitive; the columns are how srsRAN and Open5GS realise it &mdash; every symbol is a real type
-      read from the source.</p>
-      <table>
-        <thead><tr><th>Runtime primitive</th><th>srsRAN gNB (DU-high)</th><th>Open5GS core (per NF)</th></tr></thead>
-        <tbody>
-          <tr><td>Work <strong>source</strong></td><td><code>io_timer_source</code> &middot; slot timing</td><td>socket I/O &middot; <code>ogs_timer</code> &middot; <code>ogs_queue</code> push</td></tr>
-          <tr><td>Work <strong>item</strong> &middot; sched. unit</td><td><code>unique_task</code> (<code>slot_indication</code>)</td><td><code>ogs_event</code></td></tr>
-          <tr><td><strong>Queue</strong></td><td><code>priority_task_queue</code></td><td><code>ogs_queue</code> (FIFO)</td></tr>
-          <tr><td><strong>Worker</strong></td><td><code>priority_task_worker</code> pool + strand</td><td>per-NF loop (<code>ogs_pollset_poll</code>)</td></tr>
-          <tr><td><strong>Dispatch</strong></td><td><code>du_high_executor_mapper</code> &mdash; by cell</td><td><code>ogs_fsm_dispatch</code> &mdash; by event + state</td></tr>
-          <tr><td><strong>Timer</strong> service</td><td><code>timer_manager</code> / <code>unique_timer</code></td><td><code>ogs_timer</code> (rbtree)</td></tr>
-          <tr><td>Scheduling <strong>regime</strong></td><td>slot, per cell &mdash; <strong>hard deadline</strong></td><td>one event &mdash; <strong>best-effort</strong></td></tr>
-          <tr><td><strong>State</strong> locus</td><td>externalised to the tenant</td><td><code>ogs_fsm</code> engine; states are app logic</td></tr>
-        </tbody>
-      </table>
       <h4 id="rt-srsran">srsRAN runtime</h4>
       <p>The DU-high task / executor substrate (srsRAN_Project release_25_10). A
       <strong>slot-timing source</strong> (<code>io_timer_source</code>, off the radio) advances the
@@ -827,6 +800,30 @@
 </mask></svg></svg>
 </div></div>
 <!-- /diagram:open5gs-runtime -->
+
+      <h4 id="rt-compare">Comparison &mdash; two regimes</h4>
+      <p>The two runtimes are that one loop with different data structures in each slot. Each row is a
+      primitive; the columns are how srsRAN and Open5GS realise it &mdash; every symbol is a real type
+      read from the source.</p>
+      <table>
+        <thead><tr><th>Runtime primitive</th><th>srsRAN gNB (DU-high)</th><th>Open5GS core (per NF)</th></tr></thead>
+        <tbody>
+          <tr><td>Work <strong>source</strong></td><td><code>io_timer_source</code> &middot; slot timing</td><td>socket I/O &middot; <code>ogs_timer</code> &middot; <code>ogs_queue</code> push</td></tr>
+          <tr><td>Work <strong>item</strong> &middot; sched. unit</td><td><code>unique_task</code> (<code>slot_indication</code>)</td><td><code>ogs_event</code></td></tr>
+          <tr><td><strong>Queue</strong></td><td><code>priority_task_queue</code></td><td><code>ogs_queue</code> (FIFO)</td></tr>
+          <tr><td><strong>Worker</strong></td><td><code>priority_task_worker</code> pool + strand</td><td>per-NF loop (<code>ogs_pollset_poll</code>)</td></tr>
+          <tr><td><strong>Dispatch</strong></td><td><code>du_high_executor_mapper</code> &mdash; by cell</td><td><code>ogs_fsm_dispatch</code> &mdash; by event + state</td></tr>
+          <tr><td><strong>Timer</strong> service</td><td><code>timer_manager</code> / <code>unique_timer</code></td><td><code>ogs_timer</code> (rbtree)</td></tr>
+          <tr><td>Scheduling <strong>regime</strong></td><td>slot, per cell &mdash; <strong>hard deadline</strong></td><td>one event &mdash; <strong>best-effort</strong></td></tr>
+          <tr><td><strong>State</strong> locus</td><td>externalised to the tenant</td><td><code>ogs_fsm</code> engine; states are app logic</td></tr>
+        </tbody>
+      </table>
+      <p><strong>Same loop, two regimes.</strong> <strong>srsRAN</strong> is <strong>time-driven</strong>
+      &mdash; a periodic slot on a hard real-time deadline, dispatched <em>at enqueue</em> across a worker
+      pool (a strand per cell), state held by the tenant. <strong>Open5GS</strong> is
+      <strong>event-driven</strong> &mdash; an aperiodic event, best-effort, dispatched <em>at dequeue</em>
+      on a single thread per NF, state in a generic FSM engine. This runtime is the hub of the research
+      program (see <a href="#roadmap">Roadmap</a>).</p>
 
       <h3 id="app-logic">Application logic &mdash; what the runtime executes</h3>
       <p>The application logic is the domain behaviour &mdash; NR scheduling, the core's state
